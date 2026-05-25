@@ -149,31 +149,28 @@ class MATTrainer:
         """
         x:   [batch_size, n_agents, feature_dim]
         adj: [batch_size, n_agents, n_agents] (0/1 adjacency matrix)
-        returns: [n_agents, 1] consensus loss per agent
+        returns: [n_agents, 1] cosine consensus loss per agent
         """
-        # update adjcency matrix to incude "self"
-        adj += self.eye
+        # Include self-loops without mutating the sampled adjacency batch.
+        eye = self.eye.to(device=adj.device, dtype=adj.dtype)
+        adj = (adj + eye).clamp(max=1.0).float()
 
-        # Expand for pairwise differences
+        # Expand for pairwise cosine distances.
         x_i = x.unsqueeze(2)  # [batch_size, n_agents, 1, feature_dim]
         x_j = x.unsqueeze(1)  # [batch_size, 1, n_agents, feature_dim]
 
         if self.detach:
             x_j = x_j.detach()
 
-        # Compute squared L2 distance between embeddings
-        diff = (x_i - x_j) ** 2                     # [batch_size, n_agents, n_agents, feature_dim]
-        diff = diff.mean(dim=-1)                     # [batch_size, n_agents, n_agents]
+        cosine_sim = F.cosine_similarity(x_i, x_j, dim=-1, eps=1e-8)
+        cosine_loss = 1.0 - cosine_sim              # [batch_size, n_agents, n_agents]
 
         # Mask with adjacency
-        masked_diff = diff * adj                    # [batch_size, n_agents, n_agents]
+        masked_loss = cosine_loss * adj             # [batch_size, n_agents, n_agents]
 
-        # Sum over neighbors for each agent
-        per_agent_loss = masked_diff.mean(dim=-1)    # [batch_size, n_agents]
-
-        # Normalize by number of neighbors (avoid div/0)
+        # Average over each agent's neighbors.
         neighbor_counts = adj.sum(dim=-1)           # [batch_size, n_agents]
-        per_agent_loss = per_agent_loss / (neighbor_counts + 1e-8)
+        per_agent_loss = masked_loss.sum(dim=-1) / neighbor_counts.clamp_min(1.0)
 
         # Average across batch
         per_agent_loss = per_agent_loss.mean(dim=0) # [n_agents]
