@@ -1,0 +1,44 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual environments and local config
+.env
+.venv/
+venv/
+env/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Experiment outputs
+mat/scripts/results/
+mat/scripts/videos/
+wandb/
+**/wandb/
+*.wandb
+events.out.tfevents.*
+
+# Logs and generated run pointers
+*.log
+latest-run
+
+# Model checkpoints and generated arrays
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+
+# OS/editor noise
+.DS_Store
+__MACOSX/
+*.swp
+*.swo
