@@ -325,7 +325,7 @@ class MATTrainer:
 
             self.policy.optimizers.step()
 
-        for _ in range(3):
+        for _ in range(1):
             if self.policy.algorithm_name == 'mappo_dgnn_dsgd':
                 average_agent_encoders_by_adj(self.policy.transformer.obs_encoder.agent_encoders, adjcency_matrix_batch[0])
                 average_agent_encoders_by_adj(self.policy.transformer.obs_encoder.node_classifier_heads, adjcency_matrix_batch[0])

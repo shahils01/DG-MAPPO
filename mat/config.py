@@ -323,7 +323,6 @@ def get_config():
     parser.add_argument("--kernel_size", type=int, default=6,) 
     parser.add_argument("--truelyDistributed", type=bool, default=False, help="by default False, Agent policy and critic .backward() step fully decentralized if set True.")
     parser.add_argument("--consensusLoss", type=bool, default=False, help="by default False, Agent policy and critic .backward() step fully decentralized if set True.")
-    parser.add_argument("--truelyDistributedGNN", type=bool, default=False, help="by default False, GNN .backward() step fully decentralized if set True.")
     parser.add_argument("--avg_critic", type=bool, default=False, help="by default False, will average critic network parameters of all agents if set True.")
     parser.add_argument("--detach", type=bool, default=False, help="by default False, will average critic network parameters of all agents if set True.")
 

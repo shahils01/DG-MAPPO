@@ -21,7 +21,6 @@ class SMACRunner(Runner):
         self.eye = torch.eye(self.num_agents, device="cuda:0").unsqueeze(0)
         self.eye = self.eye / torch.norm(self.eye, p='fro')  # Normalize entire matrix
         self.disconnected_net = 0
-        self.truelyDistributedGNN = self.all_args.truelyDistributedGNN
         self._use_max_grad_norm = self.all_args.use_max_grad_norm
         self.max_grad_norm = self.all_args.max_grad_norm
 

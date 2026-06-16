@@ -168,13 +168,13 @@ def main(args):
 
     if all_args.use_wandb:
         run = wandb.init(config=all_args,
-                         project=wandb_project,
+                         project=wandb_project + "_journal",
                          entity=all_args.user_name,
                          notes=socket.gethostname(),
                          name=str(all_args.algorithm_name) + "_" +
                               "ablation" +
                               "_seed" + str(all_args.seed),
-                         group=all_args.map_name,
+                         group=all_args.experiment_name,
                          dir=str(run_dir),
                          job_type="training",
                          reinit=True)

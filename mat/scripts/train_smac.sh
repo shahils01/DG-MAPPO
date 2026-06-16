@@ -8,13 +8,11 @@ hidden_dim=128
 
 echo "env is ${env}, map is ${map}, algo is ${algo}, exp is ${exp}, seed is ${seed}"
 CUDA_LAUNCH_BLOCKING=1 python train/train_smac.py \
- --truelyDistributedGNN True \
  --truelyDistributed True \
- --gnn_loss_coef 20 \
- --lambd-gnn 0 \
+ --consensusLoss True \
+ --gnn_loss_coef 1 \
  --num-layers 3 \
  --iterations 5 \
- --sight_range 1 \
  --meanGNN True \
  --env_name ${env} \
  --algorithm_name ${algo} \
