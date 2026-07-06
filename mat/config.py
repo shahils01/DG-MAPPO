@@ -158,7 +158,7 @@ def get_config():
 
     # prepare parameters
     parser.add_argument("--algorithm_name", type=str,
-                        default='mat', choices=["mat", "mat_dec", "mat_encoder", "mat_decoder", "mat_gru", "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd"],
+                        default='mat', choices=["mat", "mat_dec", "mat_encoder", "mat_decoder", "mat_gru", "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd", "ippo"],
                         help="mappo_dgnn: distributed GNN with consensus loss, mappo_gnn: shared trunk GNN with consensus loss, mappo_dgnn_dsgd: distributed GNN with D-SGD")
 
     parser.add_argument("--experiment_name", type=str, default="check", help="an identifier to distinguish different experiment.")

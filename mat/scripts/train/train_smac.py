@@ -119,6 +119,10 @@ def main(args):
     if all_args.algorithm_name == "mat_gnn":
         all_args.strict_local_obs = False
 
+    if all_args.algorithm_name == "ippo":
+        all_args.iterations = 0
+        all_args.truelyDistributed = False
+
     # seed
     torch.manual_seed(all_args.seed)
     torch.cuda.manual_seed_all(all_args.seed)

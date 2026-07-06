@@ -1,7 +1,7 @@
 #!/bin/sh
 env="StarCraft2"    # StarCraft2 or smacv2
 map="5m_vs_6m"    # 6h_vs_8z, 5m_vs_6m, MMM2, protoss_5_vs_5
-algo="mappo_dgnn_dsgd"
+algo="ippo"
 exp="single"
 seed=0
 hidden_dim=128
@@ -44,9 +44,9 @@ CUDA_LAUNCH_BLOCKING=1 python train/train_smac.py \
  --num-heads 1 \
  --detach True \
  --use_eval \
- --use_wandb True \
- --wandb_name "xxx" \
- --user_name "shahil-shaik7-clemson-university"
+#  --use_wandb True \
+#  --wandb_name "xxx" \
+#  --user_name "shahil-shaik7-clemson-university"
 
 # WANDB_MODE=offline
 # If smac fails, enter the command: pkill -f "SC2_x64 -listen"
