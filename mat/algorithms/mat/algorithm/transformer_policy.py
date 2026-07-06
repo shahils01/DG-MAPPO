@@ -68,6 +68,7 @@ class TransformerPolicy:
         elif self.algorithm_name == "ippo":
             from mat.algorithms.mat.algorithm.ippo import IPPO as MAT
             self.obs_dim_ = self.obs_dim
+            self.truelyDistributed = False
 
         elif self.algorithm_name == "generative_mat_gnn":
             from mat.algorithms.mat.algorithm.ma_gnn_transformer import MultiAgentGnnTransformer as MAT
@@ -156,7 +157,8 @@ class TransformerPolicy:
         :param episode: (int) current training episode.
         :param episodes: (int) total number of training episodes.
         """
-        update_linear_schedule(self.optimizers, episode, episodes, self.lr)
+        optimizers = self.optimizers if isinstance(self.optimizers, (list, tuple)) else [self.optimizers]
+        update_linear_schedule(optimizers, episode, episodes, self.lr)
 
     def get_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, masks, available_actions=None,
                     batched_edge_index=None, deterministic=False):

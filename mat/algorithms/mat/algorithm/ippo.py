@@ -25,15 +25,18 @@ class Encoder(nn.Module):
         self.n_embd = n_embd
         self.n_agent = n_agent
         self.encode_state = encode_state
+        self.share_policy = args.share_policy
 
-        self.head_ = nn.ModuleList()
-        for n in range(n_agent):
-            critic = nn.Sequential(nn.LayerNorm(obs_dim),
-                                init_(nn.Linear(obs_dim, n_embd), activate=True), nn.GELU(), nn.LayerNorm(n_embd),
-                                init_(nn.Linear(n_embd, n_embd), activate=True), nn.GELU(), nn.LayerNorm(n_embd),
-                                init_(nn.Linear(n_embd, 1)))
+        def make_critic():
+            return nn.Sequential(nn.LayerNorm(obs_dim),
+                            init_(nn.Linear(obs_dim, n_embd), activate=True), nn.GELU(), nn.LayerNorm(n_embd),
+                            init_(nn.Linear(n_embd, n_embd), activate=True), nn.GELU(), nn.LayerNorm(n_embd),
+                            init_(nn.Linear(n_embd, num_quants)))
 
-            self.head_.append(critic)
+        if self.share_policy:
+            self.head = make_critic()
+        else:
+            self.head_ = nn.ModuleList([make_critic() for _ in range(n_agent)])
 
     def forward(self, state, obs):
         # state: (batch, n_agent, state_dim)
@@ -44,7 +47,8 @@ class Encoder(nn.Module):
             x = obs[:, n, :]
             x = x.unsqueeze(1)
             rep_n = x
-            v_loc_n = self.head_[n](rep_n[:,0,:])
+            critic = self.head if self.share_policy else self.head_[n]
+            v_loc_n = critic(rep_n[:,0,:])
             v_loc.append(v_loc_n)
             rep.append(rep_n)
         v_loc = torch.stack(v_loc, dim=1)
@@ -58,7 +62,8 @@ class Encoder(nn.Module):
         # obs = torch.cat((obs,action_hat), axis=-1)
         x = obs
         x = x.unsqueeze(1)
-        v_loc = self.head_[agent_id](x[:,0,:])
+        critic = self.head if self.share_policy else self.head_[agent_id]
+        v_loc = critic(x[:,0,:])
 
         return v_loc
 
@@ -74,28 +79,33 @@ class Decoder(nn.Module):
         self.share_actor = share_actor
         self.action_type = action_type
         self.n_agent = n_agent
+        self.share_policy = args.share_policy
 
         if action_type != 'Discrete':
-            log_std = torch.ones(action_dim)
+            log_std = torch.ones(action_dim) if self.share_policy else torch.ones(n_agent, action_dim)
             self.log_std = torch.nn.Parameter(log_std)
                         
         print('n_agent = ', n_agent)
         print('action_dim = ', action_dim)
         print('obs_dim = ', obs_dim)
         
-        self.mlp_ = nn.ModuleList()
+        def make_actor():
+            return nn.Sequential(nn.LayerNorm(obs_dim),
+                            init_(nn.Linear(obs_dim, n_embd), activate=True), nn.GELU(), nn.LayerNorm(n_embd),
+                            init_(nn.Linear(n_embd, n_embd), activate=True), nn.GELU(), nn.LayerNorm(n_embd),
+                            init_(nn.Linear(n_embd, action_dim)))
 
-        for n in range(n_agent):
-            actor = nn.Sequential(nn.LayerNorm(obs_dim),
-                                init_(nn.Linear(obs_dim, n_embd), activate=True), nn.GELU(), nn.LayerNorm(n_embd),
-                                init_(nn.Linear(n_embd, n_embd), activate=True), nn.GELU(), nn.LayerNorm(n_embd),
-                                init_(nn.Linear(n_embd, action_dim)))
-
-            self.mlp_.append(actor)
+        if self.share_policy:
+            self.mlp = make_actor()
+        else:
+            self.mlp_ = nn.ModuleList([make_actor() for _ in range(n_agent)])
 
     def zero_std(self, device):
         if self.action_type != 'Discrete':
-            log_std = torch.zeros(self.action_dim).to(device)
+            if self.share_policy:
+                log_std = torch.zeros(self.action_dim).to(device)
+            else:
+                log_std = torch.zeros(self.n_agent, self.action_dim).to(device)
             self.log_std.data = log_std
 
     def forward(self, action, obs_rep, obs):
@@ -107,7 +117,8 @@ class Decoder(nn.Module):
         for n in range(self.n_agent):
             x = obs[:, n, :]
             x = x.unsqueeze(1)
-            logit_n = self.mlp_[n](x[:, 0, :])
+            actor = self.mlp if self.share_policy else self.mlp_[n]
+            logit_n = actor(x[:, 0, :])
             logit.append(logit_n)
 
         logit = torch.stack(logit, dim=1)
@@ -203,6 +214,4 @@ class IPPO(nn.Module):
 
         v_tot, obs_rep = self.encoder(state, obs)
         return v_tot
-
-
 

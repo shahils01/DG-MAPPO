@@ -28,8 +28,8 @@ class MATTrainer:
         self.args = args
         self.num_quants = args.n_quants
         self.n_embd = args.n_embd
-        self.truelyDistributed = args.truelyDistributed
-        self.consensusLoss = args.consensusLoss
+        self.truelyDistributed = policy.truelyDistributed
+        self.consensusLoss = args.consensusLoss and args.algorithm_name in {"mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd"}
         self.avg_critic = args.avg_critic
 
         self.clip_param = args.clip_param
@@ -42,7 +42,7 @@ class MATTrainer:
         self.max_grad_norm = args.max_grad_norm       
         self.huber_delta = args.huber_delta
         # self.gnn_loss_coef = args.gnn_loss_coef
-        self.gnn_loss_coef = torch.tensor(args.gnn_loss_coef, dtype=torch.float32, device="cuda:0")
+        self.gnn_loss_coef = torch.tensor(args.gnn_loss_coef, dtype=torch.float32, device=device)
 
         self._use_recurrent_policy = args.use_recurrent_policy
         self._use_naive_recurrent = args.use_naive_recurrent_policy
@@ -270,7 +270,7 @@ class MATTrainer:
             gnn_consensus_loss = self.adj_gnn_consensus_loss(obs_batch[:,:,self.policy.obs_dim:], adjcency_matrix_batch)
             loss = policy_loss - dist_entropy * self.entropy_coef + value_loss * self.value_loss_coef + self.gnn_loss_coef * gnn_consensus_loss 
         else:
-            gnn_consensus_loss = torch.zeros(self.num_agents)
+            gnn_consensus_loss = torch.zeros(self.num_agents, 1, dtype=torch.float32, device=self.device)
             loss = policy_loss - dist_entropy * self.entropy_coef + value_loss * self.value_loss_coef
 
         # We'll store losses for logging
