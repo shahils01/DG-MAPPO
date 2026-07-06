@@ -44,9 +44,9 @@ CUDA_LAUNCH_BLOCKING=1 python train/train_smac.py \
  --num-heads 1 \
  --detach True \
  --use_eval \
-#  --use_wandb True \
-#  --wandb_name "xxx" \
-#  --user_name "shahil-shaik7-clemson-university"
+ --use_wandb True \
+ --wandb_name "xxx" \
+ --user_name "shahil-shaik7-clemson-university"
 
 # WANDB_MODE=offline
 # If smac fails, enter the command: pkill -f "SC2_x64 -listen"
