@@ -10,7 +10,8 @@ import torch
 sys.path.append("../../")
 from mat.config import get_config
 from mat.envs.football.football_env import FootballEnv
-from mat.runner.shared.football_runner_new import FootballRunner as Runner
+from mat.runner.shared.football_runner_new import FootballRunner
+from mat.runner.shared.dgn_runner import DGNRunner
 from mat.envs.env_wrappers import ShareSubprocVecEnv, ShareDummyVecEnv
 
 
@@ -108,6 +109,10 @@ def main(args):
         if all_args.algorithm_name == "consensus_ippo":
             all_args.share_policy = False
 
+    if all_args.algorithm_name == "dgn":
+        all_args.iterations = 0
+        all_args.n_quants = 1
+
     # cuda
     if all_args.cuda and torch.cuda.is_available():
         print("choose to use gpu...")
@@ -175,7 +180,8 @@ def main(args):
         "run_dir": run_dir
     }
 
-    runner = Runner(config)
+    runner_cls = DGNRunner if all_args.algorithm_name == "dgn" else FootballRunner
+    runner = runner_cls(config)
     runner.run()
 
     # post process

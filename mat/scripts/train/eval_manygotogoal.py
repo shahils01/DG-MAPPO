@@ -17,6 +17,7 @@ from mat.config import get_config
 from mat.envs.ma_mujoco.multiagent_mujoco.mujoco_multi import MujocoMulti
 # from mat.runner.shared.mujoco_runner import MujocoRunner as BaseRunner
 from mat.runner.shared.ma_gotogoal_runner import MAGoToGoalRunner as BaseRunner
+from mat.runner.shared.dgn_runner import DGNRunner
 from mat.envs.env_wrappers import ShareSubprocVecEnv, ShareDummyVecEnv
 
 """Train script for MuJoCo."""
@@ -127,6 +128,10 @@ def main(args):
         if all_args.algorithm_name == "consensus_ippo":
             all_args.share_policy = False
 
+    if all_args.algorithm_name == "dgn":
+        all_args.iterations = 0
+        all_args.n_quants = 1
+
     # cuda
     if all_args.cuda and torch.cuda.is_available():
         print("choose to use gpu...")
@@ -198,7 +203,9 @@ def main(args):
         "run_dir": run_dir
     }
 
-    if all_args.collect_wds:
+    if all_args.algorithm_name == "dgn":
+        Runner = DGNRunner
+    elif all_args.collect_wds:
         from mat.runner.shared.mujoco_runner_wds import MujocoRunnerWDS as Runner
     else:
         Runner = BaseRunner

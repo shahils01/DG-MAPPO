@@ -158,8 +158,8 @@ def get_config():
 
     # prepare parameters
     parser.add_argument("--algorithm_name", type=str,
-                        default='mat', choices=["mat", "mat_dec", "mat_encoder", "mat_decoder", "mat_gru", "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd", "ippo", "consensus_ippo"],
-                        help="mappo_dgnn: distributed GNN with consensus loss, mappo_gnn: shared trunk GNN with consensus loss, mappo_dgnn_dsgd: distributed GNN with D-SGD, consensus_ippo: IPPO with graph-neighbor critic consensus")
+                        default='mat', choices=["mat", "mat_dec", "mat_encoder", "mat_decoder", "mat_gru", "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd", "ippo", "consensus_ippo", "dgn"],
+                        help="mappo_dgnn: distributed GNN with consensus loss, mappo_gnn: shared trunk GNN with consensus loss, mappo_dgnn_dsgd: distributed GNN with D-SGD, consensus_ippo: IPPO with graph-neighbor critic consensus, dgn: DGN graph-attention baseline")
 
     parser.add_argument("--experiment_name", type=str, default="check", help="an identifier to distinguish different experiment.")
     parser.add_argument("--seed", type=int, default=1, help="Random seed for numpy/torch")
@@ -334,5 +334,24 @@ def get_config():
 
     parser.add_argument("--sight_range", type = float, default = 9.0) # L_M
     parser.add_argument("--meanGNN", type=bool, default=True, help="by default False, will average critic network parameters of all agents if set True.")
+
+    """DGN HYPERPARAMETERS"""
+    parser.add_argument("--dgn_hidden_dim", type=int, default=128)
+    parser.add_argument("--dgn_num_layers", type=int, default=2)
+    parser.add_argument("--dgn_num_heads", type=int, default=4)
+    parser.add_argument("--dgn_buffer_size", type=int, default=100000)
+    parser.add_argument("--dgn_batch_size", type=int, default=256)
+    parser.add_argument("--dgn_warmup_steps", type=int, default=1000)
+    parser.add_argument("--dgn_updates_per_step", type=int, default=1)
+    parser.add_argument("--dgn_target_tau", type=float, default=0.01)
+    parser.add_argument("--dgn_epsilon_start", type=float, default=1.0)
+    parser.add_argument("--dgn_epsilon_end", type=float, default=0.05)
+    parser.add_argument("--dgn_epsilon_decay_steps", type=int, default=50000)
+    parser.add_argument("--dgn_action_noise", type=float, default=0.2)
+    parser.add_argument("--dgn_action_noise_end", type=float, default=0.05)
+    parser.add_argument("--dgn_relation_reg_coef", type=float, default=0.01)
+    parser.add_argument("--dgn_actor_lr", type=float, default=5e-4)
+    parser.add_argument("--dgn_critic_lr", type=float, default=5e-4)
+    parser.add_argument("--dgn_action_scale", type=float, default=1.0)
 
     return parser

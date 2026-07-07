@@ -16,8 +16,9 @@ from mat.envs.starcraft2.Random_StarCraft2_Env import RandomStarCraft2Env
 from mat.envs.env_wrappers import ShareSubprocVecEnv, ShareDummyVecEnv
 from mat.envs.starcraft2.smac_maps import get_map_params
 # from mat.envs.smacv2.smacv2.env.starcraft2.maps.smac_maps import get_map_params
-# from mat.runner.shared.smac_runner import SMACRunner as Runner
-from mat.runner.shared.smac_runner_new import SMACRunner as Runner
+# from mat.runner.shared.smac_runner import SMACRunner
+from mat.runner.shared.smac_runner_new import SMACRunner
+from mat.runner.shared.dgn_runner import DGNRunner
 
 yaml_path = os.path.join(os.path.expanduser("~"), "Desktop", "marl_ws", 
                         "Multi-Agent-Transformer", "mat", "envs", "smacv2",
@@ -126,6 +127,10 @@ def main(args):
         if all_args.algorithm_name == "consensus_ippo":
             all_args.share_policy = False
 
+    if all_args.algorithm_name == "dgn":
+        all_args.iterations = 0
+        all_args.n_quants = 1
+
     # seed
     torch.manual_seed(all_args.seed)
     torch.cuda.manual_seed_all(all_args.seed)
@@ -199,7 +204,8 @@ def main(args):
         if not run_dir.exists():
             os.makedirs(str(run_dir))
 
-    runner = Runner(config)
+    runner_cls = DGNRunner if all_args.algorithm_name == "dgn" else SMACRunner
+    runner = runner_cls(config)
     runner.run()
 
     # post process

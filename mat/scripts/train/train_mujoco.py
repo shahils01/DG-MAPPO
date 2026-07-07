@@ -11,7 +11,8 @@ import torch
 sys.path.append("../../")
 from mat.config import get_config
 from mat.envs.ma_mujoco.multiagent_mujoco.mujoco_multi import MujocoMulti
-from mat.runner.shared.mujoco_runner import MujocoRunner as Runner
+from mat.runner.shared.mujoco_runner import MujocoRunner
+from mat.runner.shared.dgn_runner import DGNRunner
 from mat.envs.env_wrappers import ShareSubprocVecEnv, ShareDummyVecEnv
 
 """Train script for MuJoCo."""
@@ -101,6 +102,10 @@ def main(args):
         if all_args.algorithm_name == "consensus_ippo":
             all_args.share_policy = False
 
+    if all_args.algorithm_name == "dgn":
+        all_args.iterations = 0
+        all_args.n_quants = 1
+
     # cuda
     if all_args.cuda and torch.cuda.is_available():
         print("choose to use gpu...")
@@ -168,7 +173,8 @@ def main(args):
         "run_dir": run_dir
     }
 
-    runner = Runner(config)
+    runner_cls = DGNRunner if all_args.algorithm_name == "dgn" else MujocoRunner
+    runner = runner_cls(config)
     runner.run()
 
     # post process
