@@ -30,6 +30,7 @@ class MATTrainer:
         self.n_embd = args.n_embd
         self.truelyDistributed = policy.truelyDistributed
         self.consensusLoss = args.consensusLoss and args.algorithm_name in {"mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd"}
+        self.critic_consensus = args.algorithm_name == "consensus_ippo"
         self.avg_critic = args.avg_critic
 
         self.clip_param = args.clip_param
@@ -43,6 +44,8 @@ class MATTrainer:
         self.huber_delta = args.huber_delta
         # self.gnn_loss_coef = args.gnn_loss_coef
         self.gnn_loss_coef = torch.tensor(args.gnn_loss_coef, dtype=torch.float32, device=device)
+        self.consensus_tau = args.consensus_tau
+        self.consensus_steps = args.consensus_steps
 
         self._use_recurrent_policy = args.use_recurrent_policy
         self._use_naive_recurrent = args.use_naive_recurrent_policy
@@ -55,7 +58,7 @@ class MATTrainer:
         self.dec_actor = args.dec_actor
         self.detach = args.detach
 
-        self.eye = torch.eye(self.num_agents, device="cuda:0").unsqueeze(0)
+        self.eye = torch.eye(self.num_agents, device=device).unsqueeze(0)
         
         if self._use_valuenorm:
             self.value_normalizer = ValueNorm(self.num_agents, self.num_quants, norm_axes=0, device=self.device)
@@ -176,6 +179,76 @@ class MATTrainer:
         per_agent_loss = per_agent_loss.mean(dim=0) # [n_agents]
 
         return per_agent_loss.unsqueeze(-1)         # [n_agents, 1]
+
+    def consensus_weight_matrix(self, adj):
+        """
+        Build a row-stochastic neighbor mixing matrix from a sampled adjacency batch.
+        Empty graphs fall back to all-to-all mixing so the baseline does not silently
+        become plain IPPO when a runner has no graph.
+        """
+        if adj is None:
+            adj = torch.ones(self.num_agents, self.num_agents, dtype=torch.float32, device=self.device)
+        else:
+            adj = adj.to(dtype=torch.float32, device=self.device)
+            if adj.dim() == 3:
+                adj = adj.mean(dim=0)
+            elif adj.dim() != 2:
+                adj = adj.view(self.num_agents, self.num_agents)
+
+        if adj.shape != (self.num_agents, self.num_agents):
+            adj = torch.ones(self.num_agents, self.num_agents, dtype=torch.float32, device=self.device)
+
+        eye = torch.eye(self.num_agents, dtype=adj.dtype, device=adj.device)
+        adj = (adj + eye).clamp(max=1.0)
+        if torch.count_nonzero(adj).item() == self.num_agents:
+            adj = torch.ones_like(adj)
+
+        row_sum = adj.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        return adj / row_sum
+
+    def critic_parameter_disagreement(self, adj):
+        if not hasattr(self.policy.transformer.encoder, "head_"):
+            return torch.zeros((), dtype=torch.float32, device=self.device)
+
+        modules = self.policy.transformer.encoder.head_
+        weights = self.consensus_weight_matrix(adj)
+        total = torch.zeros((), dtype=torch.float32, device=self.device)
+        norm = torch.zeros((), dtype=torch.float32, device=self.device)
+
+        with torch.no_grad():
+            params = [[p.detach() for p in module.parameters()] for module in modules]
+            for i in range(self.num_agents):
+                for j in range(self.num_agents):
+                    if i == j:
+                        continue
+                    w_ij = weights[i, j]
+                    if w_ij <= 0:
+                        continue
+                    for p_i, p_j in zip(params[i], params[j]):
+                        total = total + w_ij * (p_i - p_j).pow(2).mean()
+                    norm = norm + w_ij
+
+        return total / norm.clamp_min(1e-8)
+
+    def apply_critic_consensus(self, adj):
+        if not hasattr(self.policy.transformer.encoder, "head_"):
+            return torch.zeros((), dtype=torch.float32, device=self.device)
+
+        modules = self.policy.transformer.encoder.head_
+        weights = self.consensus_weight_matrix(adj)
+        tau = float(self.consensus_tau)
+
+        with torch.no_grad():
+            for _ in range(max(1, int(self.consensus_steps))):
+                snapshots = [[p.detach().clone() for p in module.parameters()] for module in modules]
+                for i, module in enumerate(modules):
+                    for param_idx, param in enumerate(module.parameters()):
+                        mixed = torch.zeros_like(param.data)
+                        for j in range(self.num_agents):
+                            mixed = mixed + weights[i, j] * snapshots[j][param_idx]
+                        param.data.mul_(1.0 - tau).add_(mixed, alpha=tau)
+
+        return self.critic_parameter_disagreement(adj)
 
 
     def ppo_update(self, sample, episode, iter_step, obs_dim=None):
@@ -325,6 +398,10 @@ class MATTrainer:
 
             self.policy.optimizers.step()
 
+        critic_consensus_error = torch.zeros((), dtype=torch.float32, device=self.device)
+        if self.critic_consensus:
+            critic_consensus_error = self.apply_critic_consensus(adjcency_matrix_batch)
+
         for _ in range(1):
             if self.policy.algorithm_name == 'mappo_dgnn_dsgd':
                 average_agent_encoders_by_adj(self.policy.transformer.obs_encoder.agent_encoders, adjcency_matrix_batch[0])
@@ -343,7 +420,7 @@ class MATTrainer:
         avg_gnn_consensus_loss = sum(gnn_consensus_loss) / len(gnn_consensus_loss)
         avg_grad_norm = grad_norm #sum(grad_norms) / len(grad_norms)
      
-        return avg_value_loss, avg_grad_norm, avg_policy_loss, dist_entropy.mean().item(), avg_grad_norm, imp_weights, avg_gnn_consensus_loss #, avg_value_consensus_loss
+        return avg_value_loss, avg_grad_norm, avg_policy_loss, dist_entropy.mean().item(), avg_grad_norm, imp_weights, avg_gnn_consensus_loss, critic_consensus_error #, avg_value_consensus_loss
 
     def train(self, buffer, episode, obs_dim=None):
         """
@@ -371,13 +448,14 @@ class MATTrainer:
         train_info['critic_grad_norm'] = 0
         train_info['ratio'] = 0
         train_info['gnn_consensus_loss'] = 0
+        train_info['critic_consensus_error'] = 0
 
         for i in range(self.ppo_epoch):
             data_generator = buffer.feed_forward_generator_transformer(advantages, self.num_mini_batch, mini_batch_size=self.mini_batch_size)
 
             for sample in data_generator:
 
-                value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, imp_weights, avg_gnn_consensus_loss \
+                value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, imp_weights, avg_gnn_consensus_loss, critic_consensus_error \
                     = self.ppo_update(sample, episode, i, obs_dim)
 
                 train_info['value_loss'] += value_loss
@@ -387,6 +465,7 @@ class MATTrainer:
                 train_info['critic_grad_norm'] += critic_grad_norm
                 train_info['ratio'] += imp_weights.mean()
                 train_info['gnn_consensus_loss'] += avg_gnn_consensus_loss
+                train_info['critic_consensus_error'] += critic_consensus_error
 
         num_updates = self.ppo_epoch * self.num_mini_batch
 

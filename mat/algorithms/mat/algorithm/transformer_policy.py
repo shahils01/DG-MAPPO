@@ -65,10 +65,12 @@ class TransformerPolicy:
             if args.iterations > 0:
                 self.obs_dim_ = self.obs_dim+args.n_embd
 
-        elif self.algorithm_name == "ippo":
+        elif self.algorithm_name in ["ippo", "consensus_ippo"]:
             from mat.algorithms.mat.algorithm.ippo import IPPO as MAT
             self.obs_dim_ = self.obs_dim
             self.truelyDistributed = False
+            if self.algorithm_name == "consensus_ippo":
+                args.share_policy = False
 
         elif self.algorithm_name == "generative_mat_gnn":
             from mat.algorithms.mat.algorithm.ma_gnn_transformer import MultiAgentGnnTransformer as MAT
@@ -109,7 +111,7 @@ class TransformerPolicy:
                     )
                     for i in range(self.num_agents)
                 ]
-            elif self.algorithm_name == "mat" or self.algorithm_name == "mat_dec" or self.algorithm_name == "ippo":
+            elif self.algorithm_name == "mat" or self.algorithm_name == "mat_dec" or self.algorithm_name == "ippo" or self.algorithm_name == "consensus_ippo":
                 self.optimizers = [
                     torch.optim.Adam(
                         list(self.transformer.parameters()),

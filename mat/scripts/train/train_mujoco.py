@@ -94,6 +94,13 @@ def main(args):
         all_args.dec_actor = True
         all_args.share_actor = True
 
+    if all_args.algorithm_name in {"ippo", "consensus_ippo"}:
+        all_args.iterations = 0
+        all_args.truelyDistributed = False
+        all_args.n_quants = 1
+        if all_args.algorithm_name == "consensus_ippo":
+            all_args.share_policy = False
+
     # cuda
     if all_args.cuda and torch.cuda.is_available():
         print("choose to use gpu...")

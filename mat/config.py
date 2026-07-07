@@ -158,8 +158,8 @@ def get_config():
 
     # prepare parameters
     parser.add_argument("--algorithm_name", type=str,
-                        default='mat', choices=["mat", "mat_dec", "mat_encoder", "mat_decoder", "mat_gru", "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd", "ippo"],
-                        help="mappo_dgnn: distributed GNN with consensus loss, mappo_gnn: shared trunk GNN with consensus loss, mappo_dgnn_dsgd: distributed GNN with D-SGD")
+                        default='mat', choices=["mat", "mat_dec", "mat_encoder", "mat_decoder", "mat_gru", "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd", "ippo", "consensus_ippo"],
+                        help="mappo_dgnn: distributed GNN with consensus loss, mappo_gnn: shared trunk GNN with consensus loss, mappo_dgnn_dsgd: distributed GNN with D-SGD, consensus_ippo: IPPO with graph-neighbor critic consensus")
 
     parser.add_argument("--experiment_name", type=str, default="check", help="an identifier to distinguish different experiment.")
     parser.add_argument("--seed", type=int, default=1, help="Random seed for numpy/torch")
@@ -245,6 +245,12 @@ def get_config():
                         help='entropy term coefficient (default: 0.01)')
     parser.add_argument("--gnn_loss_coef", type=float, default=1,
                         help='gnn variance loss term coefficient (default: 1)')
+    parser.add_argument("--consensus_tau", type=float, default=1.0,
+                        help='critic parameter consensus mixing rate for consensus_ippo (default: 1.0)')
+    parser.add_argument("--consensus_steps", type=int, default=1,
+                        help='number of critic consensus mixing steps after each PPO update for consensus_ippo (default: 1)')
+    parser.add_argument("--consensus_reward_mode", type=str, default="env", choices=["env", "mean"],
+                        help='reward mode for consensus_ippo: env keeps environment rewards; mean broadcasts the per-step mean reward across agents')
     parser.add_argument("--value_loss_coef", type=float,
                         default=1, help='value loss coefficient (default: 0.5)')
     parser.add_argument("--use_max_grad_norm",

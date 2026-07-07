@@ -9,6 +9,8 @@ from mat.runner.shared.base_runner import Runner
 def _t2n(x):
     return x.detach().cpu().numpy()
 
+GNN_ALGORITHMS = {"mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd"}
+
 class FootballRunner(Runner):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
     def __init__(self, config):
@@ -71,7 +73,7 @@ class FootballRunner(Runner):
 
             for step in range(self.episode_length):
                 # Sample actions
-                if self.algorithm_name == 'mappo_gnn' or self.algorithm_name == 'mappo_dgnn' or self.algorithm_name == 'mappo_dgnn_dsgd':
+                if self.algorithm_name in GNN_ALGORITHMS:
                     values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step, batch_edge_index)
                 else:
                     values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step)
@@ -171,7 +173,12 @@ class FootballRunner(Runner):
         available_actions = torch.tensor(available_actions, dtype=torch.float32, device="cuda:0")
         obs = torch.tensor(obs, dtype=torch.float32, device="cuda:0")
 
-        if self.algorithm_name == 'mappo_gnn' or self.algorithm_name == 'mappo_dgnn' or self.algorithm_name == 'mappo_dgnn_dsgd':
+        if self.algorithm_name == "consensus_ippo":
+            adjcency_matrix = self.envs.get_visibility_matrix()[:,:,:self.num_agents]
+            adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device="cuda:0")
+            self.buffer.adjcency_matrix[0] = adjcency_matrix.clone()
+
+        if self.algorithm_name in GNN_ALGORITHMS:
             self.buffer.obs = torch.zeros((self.episode_length + 1, self.n_rollout_threads, self.num_agents, self.obs_dim+self.n_embd), dtype=torch.float32, device='cuda:0')
 
             print('obs shape = ', obs.shape)
@@ -224,7 +231,7 @@ class FootballRunner(Runner):
         obs, share_obs, rewards, dones, infos, available_actions, \
         values, actions, action_log_probs, rnn_states, rnn_states_critic = data
 
-        if self.algorithm_name == 'mappo_gnn' or self.algorithm_name == 'mappo_dgnn' or self.algorithm_name == 'mappo_dgnn_dsgd':
+        if self.algorithm_name in GNN_ALGORITHMS:
             x = self.trainer.policy.transformer.obs_encoder(obs, batched_edge_index)
             obs = torch.cat([obs,x],dim=-1).detach()
 
@@ -244,6 +251,9 @@ class FootballRunner(Runner):
 
         if not self.use_centralized_V:
             share_obs = obs
+
+        if self.algorithm_name == "consensus_ippo" and self.all_args.consensus_reward_mode == "mean":
+            rewards = rewards.mean(dim=1, keepdim=True).repeat(1, self.num_agents, 1)
 
         self.buffer.insert(share_obs, obs, rnn_states.unsqueeze(-2), rnn_states_critic.unsqueeze(-2), actions, action_log_probs, values, rewards, masks, None,
                             active_masks, available_actions, edge_index, adjcency_matrix)
@@ -283,7 +293,7 @@ class FootballRunner(Runner):
 
         while True:
             
-            if self.algorithm_name == 'mappo_gnn' or self.algorithm_name == 'mappo_dgnn' or self.algorithm_name == 'mappo_dgnn_dsgd':
+            if self.algorithm_name in GNN_ALGORITHMS:
                 edge_index = self.eval_envs.get_edge_index_matrix()
                 edge_index = torch.tensor(edge_index, dtype=torch.float32, device="cuda:0")
                 batch_edge_index = self.get_batch_edge_index(edge_index)

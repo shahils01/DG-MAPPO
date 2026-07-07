@@ -119,10 +119,12 @@ def main(args):
     if all_args.algorithm_name == "mat_gnn":
         all_args.strict_local_obs = False
 
-    if all_args.algorithm_name == "ippo":
+    if all_args.algorithm_name in {"ippo", "consensus_ippo"}:
         all_args.iterations = 0
         all_args.truelyDistributed = False
         all_args.n_quants = 1
+        if all_args.algorithm_name == "consensus_ippo":
+            all_args.share_policy = False
 
     # seed
     torch.manual_seed(all_args.seed)
