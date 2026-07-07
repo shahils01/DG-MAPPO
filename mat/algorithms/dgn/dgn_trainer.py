@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 from mat.algorithms.dgn.dgn_buffer import DGNReplayBuffer
 from mat.algorithms.dgn.dgn_model import DGNActor, DGNCritic, DGNQNetwork
+from mat.utils.util import get_shape_from_obs_space
 
 
 def _to_tensor(x, device, dtype=torch.float32):
@@ -17,7 +18,7 @@ class DGNTrainer:
         self.args = args
         self.device = device
         self.num_agents = num_agents
-        self.obs_dim = obs_space.shape[0]
+        self.obs_dim = get_shape_from_obs_space(obs_space)[0]
         self.gamma = args.gamma
         self.relation_reg_coef = args.dgn_relation_reg_coef
         self.target_tau = args.dgn_target_tau
