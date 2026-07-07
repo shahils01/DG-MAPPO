@@ -23,6 +23,15 @@ def faulty_action(action, faulty_node):
     return action_fault
 
 
+def first_agent_info(infos, env_i):
+    if infos is None or env_i >= len(infos):
+        return {}
+    info = infos[env_i]
+    if isinstance(info, (list, tuple)):
+        return info[0] if info else {}
+    return info if isinstance(info, dict) else {}
+
+
 class DGNRunner:
     def __init__(self, config):
         self.all_args = config["all_args"]
@@ -92,6 +101,8 @@ class DGNRunner:
         episodes = int(self.num_env_steps) // self.episode_length // self.n_rollout_threads
         train_episode_rewards = np.zeros(self.n_rollout_threads, dtype=np.float32)
         done_episode_rewards = []
+        last_battles_won = np.zeros(self.n_rollout_threads, dtype=np.float32)
+        last_battles_game = np.zeros(self.n_rollout_threads, dtype=np.float32)
         latest_train_info = self.trainer.empty_info()
 
         for episode in range(episodes):
@@ -155,6 +166,11 @@ class DGNRunner:
                 if done_episode_rewards:
                     log_info["average_episode_rewards"] = float(np.mean(done_episode_rewards))
                     done_episode_rewards = []
+                win_rate_info = self.compute_incremental_win_rate(infos, last_battles_won, last_battles_game)
+                if win_rate_info is not None:
+                    incre_win_rate, last_battles_won, last_battles_game = win_rate_info
+                    log_info["incre_win_rate"] = incre_win_rate
+                    print(f"incre win rate is {incre_win_rate}.")
                 self.log_train(log_info, total_num_steps)
 
             if self.use_eval and episode % self.eval_interval == 0:
@@ -180,6 +196,27 @@ class DGNRunner:
         high = self.action_space.high.reshape(1, 1, -1)
         return np.random.uniform(low, high, size=(self.n_rollout_threads, self.num_agents, self.action_space.shape[0])).astype(np.float32)
 
+    def compute_incremental_win_rate(self, infos, last_battles_won, last_battles_game):
+        battles_won = last_battles_won.copy()
+        battles_game = last_battles_game.copy()
+        found_counter = False
+
+        for env_i in range(self.n_rollout_threads):
+            info = first_agent_info(infos, env_i)
+            if "battles_won" in info and "battles_game" in info:
+                found_counter = True
+                battles_won[env_i] = info["battles_won"]
+                battles_game[env_i] = info["battles_game"]
+
+        if not found_counter:
+            return None
+
+        incre_battles_won = battles_won - last_battles_won
+        incre_battles_game = battles_game - last_battles_game
+        total_games = np.sum(incre_battles_game)
+        incre_win_rate = float(np.sum(incre_battles_won) / total_games) if total_games > 0 else 0.0
+        return incre_win_rate, battles_won, battles_game
+
     @torch.no_grad()
     def eval(self, total_num_steps, faulty_node=-1):
         if self.eval_envs is None:
@@ -192,6 +229,8 @@ class DGNRunner:
         eval_episode = 0
         episode_rewards = np.zeros(self.n_eval_rollout_threads, dtype=np.float32)
         completed_rewards = []
+        eval_battles_won = 0
+        has_win_info = False
 
         while eval_episode < self.eval_episodes:
             actions = self.trainer.select_actions(obs, adj, available_actions, deterministic=True)
@@ -212,10 +251,18 @@ class DGNRunner:
                     eval_episode += 1
                     completed_rewards.append(episode_rewards[env_i])
                     episode_rewards[env_i] = 0.0
+                    info = first_agent_info(infos, env_i)
+                    if "won" in info:
+                        has_win_info = True
+                        eval_battles_won += int(bool(info["won"]))
 
         key = "eval_average_episode_rewards" if faulty_node < 0 else f"faulty_node_{faulty_node}/eval_average_episode_rewards"
         value = float(np.mean(completed_rewards)) if completed_rewards else 0.0
-        self.log_train({key: value}, total_num_steps)
+        eval_infos = {key: value}
+        if has_win_info:
+            eval_infos["eval_win_rate"] = float(eval_battles_won / max(1, eval_episode))
+            print(f"eval win rate is {eval_infos['eval_win_rate']}.")
+        self.log_train(eval_infos, total_num_steps)
         print(f"{key} is {value}.")
 
     def log_train(self, train_infos, total_num_steps):
