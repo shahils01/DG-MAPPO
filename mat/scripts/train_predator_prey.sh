@@ -11,6 +11,7 @@ scenario="LongRangePredatorPreyContinuous-v0"
 algo="${ALGO:-mappo_dgnn_dsgd}"
 exp="${EXP:-single}"
 seed="${SEED:-1}"
+model_dir="${MODEL_DIR:-}"
 
 num_predators="${NUM_PREDATORS:-6}"
 num_prey="${NUM_PREY:-2}"
@@ -31,6 +32,12 @@ user_name="${USER_NAME:-xxx}"
 
 echo "env=${env}, scenario=${scenario}, algo=${algo}, exp=${exp}, seed=${seed}"
 echo "num_predators=${num_predators}, num_prey=${num_prey}, comm_radius=${comm_radius}, obs_radius=${obs_radius}"
+
+model_args=""
+if [ -n "${model_dir}" ]; then
+  model_args="--model_dir ${model_dir}"
+  echo "loading checkpoint: ${model_dir}"
+fi
 
 wandb_args=""
 if [ "${use_wandb}" = "True" ] || [ "${use_wandb}" = "true" ] || [ "${use_wandb}" = "1" ]; then
@@ -86,4 +93,5 @@ python train/train_long_range_predator_prey.py \
  --num-heads 1 \
  --num-layers 3 \
  --user_name "${user_name}" \
+ ${model_args} \
  ${wandb_args}
