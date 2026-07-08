@@ -85,6 +85,51 @@ class MAGoToGoalRunner(Runner):
                 writer.writeheader()
             writer.writerows(rows)
 
+    def _append_eval_predator_prey_stats(self, rows):
+        if not rows:
+            return
+
+        out_path = os.path.join(str(self.run_dir), "eval_predator_prey_stats.csv")
+        file_exists = os.path.exists(out_path)
+        fieldnames = list(rows[0].keys())
+
+        with open(out_path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerows(rows)
+
+    def _first_env_info(self, eval_infos, env_i):
+        if eval_infos is None or env_i >= len(eval_infos):
+            return {}
+        env_info = eval_infos[env_i]
+        if isinstance(env_info, dict):
+            return env_info
+        if isinstance(env_info, np.ndarray):
+            env_info = env_info.tolist()
+        if isinstance(env_info, (list, tuple)):
+            return env_info[0] if env_info and isinstance(env_info[0], dict) else {}
+        return {}
+
+    def _update_predator_prey_episode_stats(
+        self,
+        eval_infos,
+        capture_counts,
+        collision_counts,
+        final_prey_remaining,
+        capture_success,
+        max_capture_group,
+    ):
+        for env_i in range(len(capture_counts)):
+            info = self._first_env_info(eval_infos, env_i)
+            if not info:
+                continue
+            capture_counts[env_i] += int(info.get("new_captures", 0))
+            collision_counts[env_i] += int(info.get("collision_count", 0))
+            final_prey_remaining[env_i] = int(info.get("prey_remaining", final_prey_remaining[env_i]))
+            capture_success[env_i] = capture_success[env_i] or bool(info.get("capture_success", False))
+            max_capture_group[env_i] = max(max_capture_group[env_i], int(info.get("max_capture_group", 0)))
+
     def _update_aggregate_eval_stats(self, faulty_node, reached_counts, collision_counts):
         if faulty_node not in self._agg_reached_counts_by_fault:
             self._agg_reached_counts_by_fault[faulty_node] = []
@@ -428,6 +473,17 @@ class MAGoToGoalRunner(Runner):
         episode_collision_flags = np.zeros((self.n_eval_rollout_threads, self.num_agents), dtype=bool)
         episode_reached_counts = []
         episode_collision_counts = []
+        is_predator_prey = self.env_name == "long_range_predator_prey"
+        episode_capture_counts = []
+        episode_prey_remaining = []
+        episode_capture_success = []
+        episode_predator_collision_counts = []
+        episode_max_capture_groups = []
+        pp_capture_counts = np.zeros(self.n_eval_rollout_threads, dtype=np.int64)
+        pp_collision_counts = np.zeros(self.n_eval_rollout_threads, dtype=np.int64)
+        pp_final_prey_remaining = np.full(self.n_eval_rollout_threads, -1, dtype=np.int64)
+        pp_capture_success = np.zeros(self.n_eval_rollout_threads, dtype=bool)
+        pp_max_capture_group = np.zeros(self.n_eval_rollout_threads, dtype=np.int64)
         per_episode_rows = []
 
         eval_obs, eval_share_obs, _ = self.eval_envs.reset()
@@ -473,7 +529,17 @@ class MAGoToGoalRunner(Runner):
             # Obser reward and next obs
             eval_actions = faulty_action(eval_actions.cpu().detach().numpy(), faulty_node)
             eval_obs, eval_share_obs, eval_rewards, eval_dones, eval_infos, _ = self.eval_envs.step(100*eval_actions)
-            self._update_episode_team_flags(eval_infos, episode_reached_flags, episode_collision_flags)
+            if is_predator_prey:
+                self._update_predator_prey_episode_stats(
+                    eval_infos,
+                    pp_capture_counts,
+                    pp_collision_counts,
+                    pp_final_prey_remaining,
+                    pp_capture_success,
+                    pp_max_capture_group,
+                )
+            else:
+                self._update_episode_team_flags(eval_infos, episode_reached_flags, episode_collision_flags)
 
 
             if self.all_args.use_render:
@@ -503,24 +569,62 @@ class MAGoToGoalRunner(Runner):
                 if eval_dones_env[eval_i]:
                     eval_episode += 1
                     eval_episode_rewards.append(one_episode_rewards[eval_i])
-                    reached_count = int(np.sum(episode_reached_flags[eval_i]))
-                    collision_count = int(np.sum(episode_collision_flags[eval_i]))
-                    episode_reached_counts.append(reached_count)
-                    episode_collision_counts.append(collision_count)
-                    per_episode_rows.append(
-                        {
-                            "algorithm_name": self.algorithm_name,
-                            "team_size": int(self.num_agents),
-                            "faulty_node": int(faulty_node),
-                            "eval_step": int(total_num_steps),
-                            "episode_index": int(eval_episode),
-                            "reached_goal_count": reached_count,
-                            "collision_count": collision_count,
-                            "reached_goal_rate": float(reached_count / max(self.num_agents, 1)),
-                            "collision_rate": float(collision_count / max(self.num_agents, 1)),
-                            "episode_reward": float(one_episode_rewards[eval_i]),
-                        }
-                    )
+                    if is_predator_prey:
+                        capture_count = int(pp_capture_counts[eval_i])
+                        predator_collision_count = int(pp_collision_counts[eval_i])
+                        prey_remaining = int(pp_final_prey_remaining[eval_i])
+                        if prey_remaining < 0:
+                            prey_remaining = max(int(getattr(self.all_args, "num_prey", 0)) - capture_count, 0)
+                        success = bool(pp_capture_success[eval_i])
+                        max_capture_group = int(pp_max_capture_group[eval_i])
+                        num_prey = max(int(getattr(self.all_args, "num_prey", 1)), 1)
+
+                        episode_capture_counts.append(capture_count)
+                        episode_predator_collision_counts.append(predator_collision_count)
+                        episode_prey_remaining.append(prey_remaining)
+                        episode_capture_success.append(float(success))
+                        episode_max_capture_groups.append(max_capture_group)
+                        per_episode_rows.append(
+                            {
+                                "algorithm_name": self.algorithm_name,
+                                "num_predators": int(self.num_agents),
+                                "num_prey": int(num_prey),
+                                "faulty_node": int(faulty_node),
+                                "eval_step": int(total_num_steps),
+                                "episode_index": int(eval_episode),
+                                "captured_prey": capture_count,
+                                "capture_rate": float(capture_count / num_prey),
+                                "prey_remaining": prey_remaining,
+                                "capture_success": int(success),
+                                "predator_collision_pairs": predator_collision_count,
+                                "max_capture_group": max_capture_group,
+                                "episode_reward": float(one_episode_rewards[eval_i]),
+                            }
+                        )
+                        pp_capture_counts[eval_i] = 0
+                        pp_collision_counts[eval_i] = 0
+                        pp_final_prey_remaining[eval_i] = -1
+                        pp_capture_success[eval_i] = False
+                        pp_max_capture_group[eval_i] = 0
+                    else:
+                        reached_count = int(np.sum(episode_reached_flags[eval_i]))
+                        collision_count = int(np.sum(episode_collision_flags[eval_i]))
+                        episode_reached_counts.append(reached_count)
+                        episode_collision_counts.append(collision_count)
+                        per_episode_rows.append(
+                            {
+                                "algorithm_name": self.algorithm_name,
+                                "team_size": int(self.num_agents),
+                                "faulty_node": int(faulty_node),
+                                "eval_step": int(total_num_steps),
+                                "episode_index": int(eval_episode),
+                                "reached_goal_count": reached_count,
+                                "collision_count": collision_count,
+                                "reached_goal_rate": float(reached_count / max(self.num_agents, 1)),
+                                "collision_rate": float(collision_count / max(self.num_agents, 1)),
+                                "episode_reward": float(one_episode_rewards[eval_i]),
+                            }
+                        )
                     one_episode_rewards[eval_i] = 0
                     episode_reached_flags[eval_i] = False
                     episode_collision_flags[eval_i] = False
@@ -528,49 +632,58 @@ class MAGoToGoalRunner(Runner):
             if eval_episode >= self.all_args.eval_episodes:
                 key_average = 'faulty_node_' + str(faulty_node) + '/eval_average_episode_rewards'
                 key_max = 'faulty_node_' + str(faulty_node) + '/eval_max_episode_rewards'
-                key_reached_count = 'faulty_node_' + str(faulty_node) + '/eval_reached_goal_count'
-                key_collision_count = 'faulty_node_' + str(faulty_node) + '/eval_collision_count'
-                key_reached_rate = 'faulty_node_' + str(faulty_node) + '/eval_reached_goal_rate'
-                key_collision_rate = 'faulty_node_' + str(faulty_node) + '/eval_collision_rate'
-                eval_env_infos = {key_average: eval_episode_rewards,
-                                  key_max: [np.max(eval_episode_rewards)],
-                                  key_reached_count: episode_reached_counts,
-                                  key_collision_count: episode_collision_counts,
-                                  key_reached_rate: [c / max(self.num_agents, 1) for c in episode_reached_counts],
-                                  key_collision_rate: [c / max(self.num_agents, 1) for c in episode_collision_counts]}
+                if is_predator_prey:
+                    num_prey = max(int(getattr(self.all_args, "num_prey", 1)), 1)
+                    key_captured = 'faulty_node_' + str(faulty_node) + '/eval_captured_prey'
+                    key_capture_rate = 'faulty_node_' + str(faulty_node) + '/eval_capture_rate'
+                    key_prey_remaining = 'faulty_node_' + str(faulty_node) + '/eval_prey_remaining'
+                    key_capture_success = 'faulty_node_' + str(faulty_node) + '/eval_capture_success_rate'
+                    key_predator_collisions = 'faulty_node_' + str(faulty_node) + '/eval_predator_collision_pairs'
+                    key_max_capture_group = 'faulty_node_' + str(faulty_node) + '/eval_max_capture_group'
+                    eval_env_infos = {
+                        key_average: eval_episode_rewards,
+                        key_max: [np.max(eval_episode_rewards)],
+                        key_captured: episode_capture_counts,
+                        key_capture_rate: [c / num_prey for c in episode_capture_counts],
+                        key_prey_remaining: episode_prey_remaining,
+                        key_capture_success: episode_capture_success,
+                        key_predator_collisions: episode_predator_collision_counts,
+                        key_max_capture_group: episode_max_capture_groups,
+                    }
 
-                self.log_env(eval_env_infos, total_num_steps)
-                self._append_eval_team_stats(per_episode_rows)
-                print("faulty_node {} eval_average_episode_rewards is {}."
-                      .format(faulty_node, np.mean(eval_episode_rewards)))
-                print(
-                    "faulty_node {} avg reached_goals {:.3f}/{}, avg collisions {:.3f}/{}."
-                    .format(
-                        faulty_node,
-                        np.mean(episode_reached_counts) if len(episode_reached_counts) > 0 else 0.0,
-                        self.num_agents,
-                        np.mean(episode_collision_counts) if len(episode_collision_counts) > 0 else 0.0,
-                        self.num_agents,
+                    self.log_env(eval_env_infos, total_num_steps)
+                    self._append_eval_predator_prey_stats(per_episode_rows)
+                    print("faulty_node {} eval_average_episode_rewards is {}."
+                          .format(faulty_node, np.mean(eval_episode_rewards)))
+                    print(
+                        "faulty_node {} avg captured_prey {:.3f}/{}, capture_success {:.1f}%, "
+                        "avg prey_remaining {:.3f}, avg predator_collision_pairs {:.3f}, avg max_capture_group {:.3f}."
+                        .format(
+                            faulty_node,
+                            np.mean(episode_capture_counts) if len(episode_capture_counts) > 0 else 0.0,
+                            num_prey,
+                            100.0 * (np.mean(episode_capture_success) if len(episode_capture_success) > 0 else 0.0),
+                            np.mean(episode_prey_remaining) if len(episode_prey_remaining) > 0 else 0.0,
+                            np.mean(episode_predator_collision_counts) if len(episode_predator_collision_counts) > 0 else 0.0,
+                            np.mean(episode_max_capture_groups) if len(episode_max_capture_groups) > 0 else 0.0,
+                        )
                     )
-                )
-                
-                if self.use_wandb:
+
+                    if self.use_wandb:
                         wandb.log(
                             {
                                 "eval_average_episode_rewards": np.mean(eval_episode_rewards),
-                                "eval_reached_goal_count": np.mean(episode_reached_counts) if len(episode_reached_counts) > 0 else 0.0,
-                                "eval_collision_count": np.mean(episode_collision_counts) if len(episode_collision_counts) > 0 else 0.0,
-                                "eval_reached_goal_rate": np.mean(episode_reached_counts) / max(self.num_agents, 1) if len(episode_reached_counts) > 0 else 0.0,
-                                "eval_collision_rate": np.mean(episode_collision_counts) / max(self.num_agents, 1) if len(episode_collision_counts) > 0 else 0.0,
-                                "eval_team_size": int(self.num_agents),
+                                "eval_captured_prey": np.mean(episode_capture_counts) if len(episode_capture_counts) > 0 else 0.0,
+                                "eval_capture_rate": np.mean(episode_capture_counts) / num_prey if len(episode_capture_counts) > 0 else 0.0,
+                                "eval_prey_remaining": np.mean(episode_prey_remaining) if len(episode_prey_remaining) > 0 else 0.0,
+                                "eval_capture_success_rate": np.mean(episode_capture_success) if len(episode_capture_success) > 0 else 0.0,
+                                "eval_predator_collision_pairs": np.mean(episode_predator_collision_counts) if len(episode_predator_collision_counts) > 0 else 0.0,
+                                "eval_max_capture_group": np.mean(episode_max_capture_groups) if len(episode_max_capture_groups) > 0 else 0.0,
+                                "eval_num_predators": int(self.num_agents),
+                                "eval_num_prey": int(num_prey),
                                 "eval_faulty_node": int(faulty_node),
                             },
                             step=total_num_steps,
-                        )
-                        self._update_aggregate_eval_stats(
-                            faulty_node,
-                            episode_reached_counts,
-                            episode_collision_counts,
                         )
                         if len(per_episode_rows) > 0:
                             table_columns = list(per_episode_rows[0].keys())
@@ -578,23 +691,77 @@ class MAGoToGoalRunner(Runner):
                             for row in per_episode_rows:
                                 table.add_data(*[row[c] for c in table_columns])
                             wandb.log(
-                                {f"faulty_node_{faulty_node}/eval_team_stats_table": table},
+                                {f"faulty_node_{faulty_node}/eval_predator_prey_stats_table": table},
                                 step=total_num_steps,
                             )
-                        agg_reached_counts = self._agg_reached_counts_by_fault.get(faulty_node, episode_reached_counts)
-                        agg_collision_counts = self._agg_collision_counts_by_fault.get(faulty_node, episode_collision_counts)
-                        self._log_ci_bar_chart_to_wandb(
-                            agg_reached_counts,
-                            agg_collision_counts,
+                else:
+                    key_reached_count = 'faulty_node_' + str(faulty_node) + '/eval_reached_goal_count'
+                    key_collision_count = 'faulty_node_' + str(faulty_node) + '/eval_collision_count'
+                    key_reached_rate = 'faulty_node_' + str(faulty_node) + '/eval_reached_goal_rate'
+                    key_collision_rate = 'faulty_node_' + str(faulty_node) + '/eval_collision_rate'
+                    eval_env_infos = {key_average: eval_episode_rewards,
+                                      key_max: [np.max(eval_episode_rewards)],
+                                      key_reached_count: episode_reached_counts,
+                                      key_collision_count: episode_collision_counts,
+                                      key_reached_rate: [c / max(self.num_agents, 1) for c in episode_reached_counts],
+                                      key_collision_rate: [c / max(self.num_agents, 1) for c in episode_collision_counts]}
+
+                    self.log_env(eval_env_infos, total_num_steps)
+                    self._append_eval_team_stats(per_episode_rows)
+                    print("faulty_node {} eval_average_episode_rewards is {}."
+                          .format(faulty_node, np.mean(eval_episode_rewards)))
+                    print(
+                        "faulty_node {} avg reached_goals {:.3f}/{}, avg collisions {:.3f}/{}."
+                        .format(
                             faulty_node,
-                            total_num_steps,
+                            np.mean(episode_reached_counts) if len(episode_reached_counts) > 0 else 0.0,
+                            self.num_agents,
+                            np.mean(episode_collision_counts) if len(episode_collision_counts) > 0 else 0.0,
+                            self.num_agents,
                         )
-                        self._log_ci_summary_table_to_wandb(
-                            agg_reached_counts,
-                            agg_collision_counts,
-                            faulty_node,
-                            total_num_steps,
-                        )
+                    )
+                    
+                    if self.use_wandb:
+                            wandb.log(
+                                {
+                                    "eval_average_episode_rewards": np.mean(eval_episode_rewards),
+                                    "eval_reached_goal_count": np.mean(episode_reached_counts) if len(episode_reached_counts) > 0 else 0.0,
+                                    "eval_collision_count": np.mean(episode_collision_counts) if len(episode_collision_counts) > 0 else 0.0,
+                                    "eval_reached_goal_rate": np.mean(episode_reached_counts) / max(self.num_agents, 1) if len(episode_reached_counts) > 0 else 0.0,
+                                    "eval_collision_rate": np.mean(episode_collision_counts) / max(self.num_agents, 1) if len(episode_collision_counts) > 0 else 0.0,
+                                    "eval_team_size": int(self.num_agents),
+                                    "eval_faulty_node": int(faulty_node),
+                                },
+                                step=total_num_steps,
+                            )
+                            self._update_aggregate_eval_stats(
+                                faulty_node,
+                                episode_reached_counts,
+                                episode_collision_counts,
+                            )
+                            if len(per_episode_rows) > 0:
+                                table_columns = list(per_episode_rows[0].keys())
+                                table = wandb.Table(columns=table_columns)
+                                for row in per_episode_rows:
+                                    table.add_data(*[row[c] for c in table_columns])
+                                wandb.log(
+                                    {f"faulty_node_{faulty_node}/eval_team_stats_table": table},
+                                    step=total_num_steps,
+                                )
+                            agg_reached_counts = self._agg_reached_counts_by_fault.get(faulty_node, episode_reached_counts)
+                            agg_collision_counts = self._agg_collision_counts_by_fault.get(faulty_node, episode_collision_counts)
+                            self._log_ci_bar_chart_to_wandb(
+                                agg_reached_counts,
+                                agg_collision_counts,
+                                faulty_node,
+                                total_num_steps,
+                            )
+                            self._log_ci_summary_table_to_wandb(
+                                agg_reached_counts,
+                                agg_collision_counts,
+                                faulty_node,
+                                total_num_steps,
+                            )
                 
                 if self.reward_list is None:
                     self.reward_list = np.array(np.mean(eval_episode_rewards))

@@ -417,6 +417,10 @@ class LongRangePredatorPreyTorchCore:
                         "capture_success": bool(all_captured[env_i].item()),
                         "new_captures": int(new_captures[env_i].sum().item()),
                         "prey_remaining": int(self.prey_alive[env_i].sum().item()),
+                        "capture_fraction": float(
+                            1.0 - self.prey_alive[env_i].float().mean().item()
+                        ),
+                        "collision_count": int(self.last_collision_count[env_i].item()),
                         "prey_seen_by_agent": bool(visible[env_i, agent_i].any().item()),
                         "comm_degree": int(comm[env_i, agent_i].sum().item()),
                         "max_capture_group": int(close_counts[env_i].max().item()),
