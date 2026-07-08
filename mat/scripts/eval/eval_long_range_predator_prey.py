@@ -4,7 +4,6 @@
 import csv
 import os
 import sys
-import types
 import warnings
 from pathlib import Path
 
@@ -89,6 +88,77 @@ def save_gif(output, frames, fps):
     )
     with Image.open(output) as image:
         image.verify()
+
+
+class HumanRenderer:
+    def __init__(self, fps):
+        self.fps = max(int(fps), 1)
+        self.backend = None
+        self.cv2 = None
+        self.plt = None
+        self.fig = None
+        self.ax = None
+        self.image = None
+        self.warned = False
+
+    def _init_backend(self, frame):
+        try:
+            import cv2
+
+            self.cv2 = cv2
+            cv2.namedWindow("LongRangePredatorPreyContinuous-v0", cv2.WINDOW_NORMAL)
+            self.backend = "cv2"
+            return
+        except Exception as exc:
+            cv2_error = exc
+
+        try:
+            import matplotlib.pyplot as plt
+
+            self.plt = plt
+            plt.ion()
+            self.fig, self.ax = plt.subplots()
+            self.image = self.ax.imshow(frame)
+            self.ax.set_axis_off()
+            self.fig.canvas.manager.set_window_title("LongRangePredatorPreyContinuous-v0")
+            self.backend = "matplotlib"
+            return
+        except Exception as exc:
+            if not self.warned:
+                warnings.warn(
+                    "Could not open a human render window. "
+                    f"OpenCV error: {cv2_error}; matplotlib error: {exc}. "
+                    "Use RENDER_MODE=gif on headless machines.",
+                    RuntimeWarning,
+                )
+                self.warned = True
+            self.backend = "disabled"
+
+    def show(self, frame):
+        frame = np.asarray(frame, dtype=np.uint8)
+        if self.backend is None:
+            self._init_backend(frame)
+
+        if self.backend == "cv2":
+            bgr = self.cv2.cvtColor(frame, self.cv2.COLOR_RGB2BGR)
+            self.cv2.imshow("LongRangePredatorPreyContinuous-v0", bgr)
+            delay_ms = max(int(round(1000.0 / self.fps)), 1)
+            key = self.cv2.waitKey(delay_ms) & 0xFF
+            return key not in (27, ord("q"))
+
+        if self.backend == "matplotlib":
+            self.image.set_data(frame)
+            self.fig.canvas.draw_idle()
+            self.plt.pause(1.0 / self.fps)
+            return self.plt.fignum_exists(self.fig.number)
+
+        return True
+
+    def close(self):
+        if self.backend == "cv2" and self.cv2 is not None:
+            self.cv2.destroyWindow("LongRangePredatorPreyContinuous-v0")
+        elif self.backend == "matplotlib" and self.plt is not None and self.fig is not None:
+            self.plt.close(self.fig)
 
 
 def first_info(infos):
@@ -192,7 +262,7 @@ def dgn_actions(trainer, envs, obs, available_actions, deterministic):
     return actions
 
 
-def rollout_episode(all_args, envs, actor, device, episode_idx, run_dir):
+def rollout_episode(all_args, envs, actor, device, episode_idx, run_dir, human_renderer=None):
     obs, share_obs, available_actions = envs.reset()
     episode_reward = 0.0
     frames = []
@@ -207,7 +277,9 @@ def rollout_episode(all_args, envs, actor, device, episode_idx, run_dir):
         if all_args.render_mode == "gif":
             frames.append(envs.render(mode="rgb_array")[0])
         elif all_args.render_mode == "human":
-            envs.render(mode="human")
+            frame = envs.render(mode="rgb_array")[0]
+            if human_renderer is not None and not human_renderer.show(frame):
+                break
 
         if all_args.algorithm_name == "dgn":
             actions = dgn_actions(actor, envs, obs, available_actions, all_args.deterministic)
@@ -223,7 +295,9 @@ def rollout_episode(all_args, envs, actor, device, episode_idx, run_dir):
             if all_args.render_mode == "gif":
                 frames.append(envs.render(mode="rgb_array")[0])
             elif all_args.render_mode == "human":
-                envs.render(mode="human")
+                frame = envs.render(mode="rgb_array")[0]
+                if human_renderer is not None:
+                    human_renderer.show(frame)
             break
 
     info = first_info(infos)
@@ -283,15 +357,26 @@ def main(args):
         actor = make_mat_policy(all_args, envs, device)
 
     rows = []
+    human_renderer = HumanRenderer(all_args.render_fps) if all_args.render_mode == "human" else None
     try:
         for episode_idx in range(1, all_args.eval_episodes + 1):
-            row = rollout_episode(all_args, envs, actor, device, episode_idx, run_dir)
+            row = rollout_episode(
+                all_args,
+                envs,
+                actor,
+                device,
+                episode_idx,
+                run_dir,
+                human_renderer=human_renderer,
+            )
             rows.append(row)
             print(
                 f"episode={row['episode']} reward={row['reward']:.3f} steps={row['steps']} "
                 f"prey_remaining={row['prey_remaining']} gif={row['gif']}"
             )
     finally:
+        if human_renderer is not None:
+            human_renderer.close()
         envs.close()
 
     metrics_path = run_dir / "eval_metrics.csv"
