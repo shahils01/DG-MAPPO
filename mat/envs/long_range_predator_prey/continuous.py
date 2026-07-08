@@ -38,6 +38,7 @@ class LongRangePredatorPreyConfig:
     prey_max_omega: float = 2.3
     prey_avoid_radius: float = 2.4
     collision_radius: float = 0.18
+    collision_resolution_iters: int = 4
     capture_reward: float = 10.0
     all_captured_bonus: float = 15.0
     progress_scale: float = 0.6
@@ -76,6 +77,7 @@ class LongRangePredatorPreyTorchCore:
         self.prey_alive = torch.ones(self.n_envs, self.n_prey, dtype=torch.bool, device=self.device)
         self.steps = torch.zeros(self.n_envs, dtype=torch.long, device=self.device)
         self.prev_min_dist = torch.zeros(self.n_envs, self.n_prey, device=self.device)
+        self.last_collision_count = torch.zeros(self.n_envs, dtype=torch.long, device=self.device)
         self.reset()
 
     @property
@@ -121,6 +123,8 @@ class LongRangePredatorPreyTorchCore:
 
         old_min_dist = self.prev_min_dist.clone()
         self._step_predators(actions)
+        self.last_collision_count = self._collision_count()
+        self._resolve_predator_collisions()
         self._step_prey()
         new_captures, close_counts = self._update_captures()
         self.steps += 1
@@ -142,7 +146,7 @@ class LongRangePredatorPreyTorchCore:
         max_close = close_counts.float().max(dim=1).values / max(float(self.cfg.capture_k), 1.0)
         surround = torch.clamp(max_close, 0.0, 1.0) * self.cfg.surround_scale
 
-        collision_penalty = self._collision_count().float() * self.cfg.collision_penalty
+        collision_penalty = self.last_collision_count.float() * self.cfg.collision_penalty
         wall_penalty = self._wall_contact_count().float() * self.cfg.wall_penalty
         control_penalty = actions.square().mean(dim=(1, 2)) * self.cfg.control_penalty
         team_reward = (
@@ -244,6 +248,34 @@ class LongRangePredatorPreyTorchCore:
         dx = torch.stack([torch.cos(theta), torch.sin(theta)], dim=-1) * v.unsqueeze(-1) * self.cfg.dt
         self.predator_pose[..., :2] = self._clamp_xy(self.predator_pose[..., :2] + dx)
         self.predator_pose[..., 2] = theta
+
+    def _resolve_predator_collisions(self) -> None:
+        """Project overlapping predators apart using a small position-based solve."""
+        if self.n_predators < 2 or self.cfg.collision_radius <= 0.0:
+            return
+
+        eye = torch.eye(self.n_predators, dtype=torch.bool, device=self.device).unsqueeze(0)
+        base_angle = torch.linspace(
+            0.0,
+            2.0 * torch.pi,
+            self.n_predators + 1,
+            device=self.device,
+        )[:-1]
+        base_dir = torch.stack([torch.cos(base_angle), torch.sin(base_angle)], dim=-1)
+        fallback = base_dir.unsqueeze(1) - base_dir.unsqueeze(0)
+        fallback = fallback / torch.norm(fallback, dim=-1, keepdim=True).clamp_min(1e-6)
+        fallback = fallback.unsqueeze(0)
+
+        for _ in range(max(int(self.cfg.collision_resolution_iters), 1)):
+            xy = self.predator_pose[:, :, :2]
+            diff = xy.unsqueeze(2) - xy.unsqueeze(1)
+            dist = torch.norm(diff, dim=-1, keepdim=True)
+            direction = torch.where(dist > 1e-6, diff / dist.clamp_min(1e-6), fallback)
+
+            overlap = (self.cfg.collision_radius - dist.squeeze(-1)).clamp_min(0.0)
+            overlap = overlap.masked_fill(eye, 0.0)
+            correction = (direction * (0.5 * overlap).unsqueeze(-1)).sum(dim=2)
+            self.predator_pose[:, :, :2] = self._clamp_xy(xy + correction)
 
     def _step_prey(self) -> None:
         pred_xy = self.predator_pose[:, :, :2]
