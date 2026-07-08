@@ -4,6 +4,7 @@
 import os
 import socket
 import sys
+import types
 from pathlib import Path
 
 import gymnasium as gym
@@ -55,18 +56,50 @@ def seed_env(env, seed):
         env.reset(seed=seed)
 
 
+def optional_wandb(use_wandb):
+    if use_wandb:
+        import wandb
+
+        return wandb
+
+    try:
+        import wandb
+    except ModuleNotFoundError:
+        wandb = types.ModuleType("wandb")
+        wandb.run = None
+        wandb.log = lambda *args, **kwargs: None
+        wandb.Image = lambda image, *args, **kwargs: image
+
+        class _NoOpTable:
+            def __init__(self, *args, **kwargs):
+                self.data = []
+
+            def add_data(self, *args):
+                self.data.append(args)
+
+        wandb.Table = _NoOpTable
+        sys.modules["wandb"] = wandb
+
+    return wandb
+
+
+def make_predator_prey_env(all_args, seed):
+    env = gym.make(
+        all_args.scenario,
+        disable_env_checker=True,
+        **make_env_kwargs(all_args, seed),
+    )
+    env = env.unwrapped
+    seed_env(env, seed)
+    return env
+
+
 def make_train_env(all_args):
     def get_env_fn(rank):
         def init_env():
             if all_args.env_name != "long_range_predator_prey":
                 raise NotImplementedError(f"Unsupported env_name: {all_args.env_name}")
-            env = gym.make(
-                all_args.scenario,
-                disable_env_checker=True,
-                **make_env_kwargs(all_args, all_args.seed + rank * 1000),
-            )
-            seed_env(env, all_args.seed + rank * 1000)
-            return env
+            return make_predator_prey_env(all_args, all_args.seed + rank * 1000)
 
         return init_env
 
@@ -80,13 +113,7 @@ def make_eval_env(all_args):
         def init_env():
             if all_args.env_name != "long_range_predator_prey":
                 raise NotImplementedError(f"Unsupported env_name: {all_args.env_name}")
-            env = gym.make(
-                all_args.scenario,
-                disable_env_checker=True,
-                **make_env_kwargs(all_args, all_args.seed * 50000 + rank * 10000),
-            )
-            seed_env(env, all_args.seed * 50000 + rank * 10000)
-            return env
+            return make_predator_prey_env(all_args, all_args.seed * 50000 + rank * 10000)
 
         return init_env
 
@@ -144,14 +171,14 @@ def configure_algorithm(all_args):
 
 
 def main(args):
-    import wandb
-
-    from mat.runner.shared.dgn_runner import DGNRunner
-    from mat.runner.shared.ma_gotogoal_runner import MAGoToGoalRunner
-
     parser = get_config()
     all_args = parse_args(args, parser)
     configure_algorithm(all_args)
+
+    wandb = optional_wandb(all_args.use_wandb)
+
+    from mat.runner.shared.dgn_runner import DGNRunner
+    from mat.runner.shared.ma_gotogoal_runner import MAGoToGoalRunner
 
     if all_args.cuda and torch.cuda.is_available():
         print("choose to use gpu...")

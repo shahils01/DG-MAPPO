@@ -2,10 +2,10 @@ import wandb
 import os
 import numpy as np
 import torch
-from tensorboardX import SummaryWriter
 from mat.utils.shared_buffer import SharedReplayBuffer
 from mat.algorithms.mat.mat_trainer import MATTrainer as TrainAlgo
 from mat.algorithms.mat.algorithm.transformer_policy import TransformerPolicy as Policy
+from mat.utils.logging import SummaryWriter
 from mat.utils.util import get_shape_from_obs_space
 
 def _t2n(x):

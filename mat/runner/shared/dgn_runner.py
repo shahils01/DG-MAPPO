@@ -4,9 +4,9 @@ import time
 import numpy as np
 import torch
 import wandb
-from tensorboardX import SummaryWriter
 
 from mat.algorithms.dgn.dgn_trainer import DGNTrainer
+from mat.utils.logging import SummaryWriter
 from mat.utils.util import get_shape_from_obs_space
 
 

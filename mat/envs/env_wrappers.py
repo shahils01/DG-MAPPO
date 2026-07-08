@@ -24,6 +24,10 @@ class CloudpickleWrapper(object):
         self.x = pickle.loads(ob)
 
 
+def _unwrap_env(env):
+    return getattr(env, "unwrapped", env)
+
+
 class ShareVecEnv(ABC):
     """
     An abstract asynchronous, vectorized environment.
@@ -184,14 +188,15 @@ def worker(remote, parent_remote, env_fn_wrapper):
             elif data == "human":
                 env.render(mode=data)
         elif cmd == 'reset_task':
-            ob = env.reset_task()
+            ob = _unwrap_env(env).reset_task()
             remote.send(ob)
         elif cmd == 'close':
             env.close()
             remote.close()
             break
         elif cmd == 'get_spaces':
-            remote.send((env.observation_space, env.share_observation_space, env.action_space))
+            target = _unwrap_env(env)
+            remote.send((target.observation_space, target.share_observation_space, target.action_space))
         else:
             raise NotImplementedError
 
@@ -338,13 +343,17 @@ def shareworker(remote, parent_remote, env_fn_wrapper):
             ob, s_ob, available_actions = env.reset()
             remote.send((ob, s_ob, available_actions))
         elif cmd == 'get_edge_index_matrix':
-            edge_index_matrix = env.get_edge_index_matrix()
+            target = _unwrap_env(env)
+            if data is not None:
+                edge_index_matrix = target.get_edge_index_matrix(data)
+            else:
+                edge_index_matrix = target.get_edge_index_matrix()
             remote.send((edge_index_matrix))
         elif cmd == 'get_visibility_matrix':
-            visibility_matrix = env.get_visibility_matrix()
+            visibility_matrix = _unwrap_env(env).get_visibility_matrix()
             remote.send((visibility_matrix))
         elif cmd == 'reset_task':
-            ob = env.reset_task()
+            ob = _unwrap_env(env).reset_task()
             remote.send(ob)
         elif cmd == 'render':
             if data == "rgb_array":
@@ -357,12 +366,13 @@ def shareworker(remote, parent_remote, env_fn_wrapper):
             remote.close()
             break
         elif cmd == 'get_num_agents':
-            remote.send((env.n_agents))
+            remote.send((_unwrap_env(env).n_agents))
         elif cmd == 'get_spaces':
+            target = _unwrap_env(env)
             remote.send(
-                (env.observation_space, env.share_observation_space, env.action_space))
+                (target.observation_space, target.share_observation_space, target.action_space))
         elif cmd == 'render_vulnerability':
-            fr = env.render_vulnerability(data)
+            fr = _unwrap_env(env).render_vulnerability(data)
             remote.send((fr))
         else:
             raise NotImplementedError
@@ -456,7 +466,7 @@ def choosesimpleworker(remote, parent_remote, env_fn_wrapper):
             ob = env.reset(data)
             remote.send((ob))
         elif cmd == 'reset_task':
-            ob = env.reset_task()
+            ob = _unwrap_env(env).reset_task()
             remote.send(ob)
         elif cmd == 'close':
             env.close()
@@ -469,8 +479,9 @@ def choosesimpleworker(remote, parent_remote, env_fn_wrapper):
             elif data == "human":
                 env.render(mode=data)
         elif cmd == 'get_spaces':
+            target = _unwrap_env(env)
             remote.send(
-                (env.observation_space, env.share_observation_space, env.action_space))
+                (target.observation_space, target.share_observation_space, target.action_space))
         else:
             raise NotImplementedError
 
@@ -550,7 +561,7 @@ def chooseworker(remote, parent_remote, env_fn_wrapper):
             ob, s_ob, available_actions = env.reset(data)
             remote.send((ob, s_ob, available_actions))
         elif cmd == 'reset_task':
-            ob = env.reset_task()
+            ob = _unwrap_env(env).reset_task()
             remote.send(ob)
         elif cmd == 'close':
             env.close()
@@ -559,8 +570,9 @@ def chooseworker(remote, parent_remote, env_fn_wrapper):
         elif cmd == 'render':
             remote.send(env.render(mode='rgb_array'))
         elif cmd == 'get_spaces':
+            target = _unwrap_env(env)
             remote.send(
-                (env.observation_space, env.share_observation_space, env.action_space))
+                (target.observation_space, target.share_observation_space, target.action_space))
         else:
             raise NotImplementedError
 
@@ -635,15 +647,16 @@ def chooseguardworker(remote, parent_remote, env_fn_wrapper):
             ob = env.reset(data)
             remote.send((ob))
         elif cmd == 'reset_task':
-            ob = env.reset_task()
+            ob = _unwrap_env(env).reset_task()
             remote.send(ob)
         elif cmd == 'close':
             env.close()
             remote.close()
             break
         elif cmd == 'get_spaces':
+            target = _unwrap_env(env)
             remote.send(
-                (env.observation_space, env.share_observation_space, env.action_space))
+                (target.observation_space, target.share_observation_space, target.action_space))
         else:
             raise NotImplementedError
 
@@ -709,7 +722,7 @@ class ChooseGuardSubprocVecEnv(ShareVecEnv):
 class DummyVecEnv(ShareVecEnv):
     def __init__(self, env_fns):
         self.envs = [fn() for fn in env_fns]
-        env = self.envs[0]
+        env = _unwrap_env(self.envs[0])
         ShareVecEnv.__init__(self, len(
             env_fns), env.observation_space, env.share_observation_space, env.action_space)
         self.actions = None
@@ -763,7 +776,7 @@ class DummyVecEnv(ShareVecEnv):
 class ShareDummyVecEnv(ShareVecEnv):
     def __init__(self, env_fns):
         self.envs = [fn() for fn in env_fns]
-        env = self.envs[0]
+        env = _unwrap_env(self.envs[0])
         self.n_agents = env.n_agents
         ShareVecEnv.__init__(self, len(
             env_fns), env.observation_space, env.share_observation_space, env.action_space)
@@ -797,9 +810,9 @@ class ShareDummyVecEnv(ShareVecEnv):
         """Returns a stacked edge index matrix across all environments."""
         # Collect edge indices from all environments
         if faulty_node is not None:
-            results = [env.get_edge_index_matrix(faulty_node) for env in self.envs]
+            results = [_unwrap_env(env).get_edge_index_matrix(faulty_node) for env in self.envs]
         else:
-            results = [env.get_edge_index_matrix() for env in self.envs]
+            results = [_unwrap_env(env).get_edge_index_matrix() for env in self.envs]
         
         # Convert to list of arrays and stack into a single NumPy array
         edge_index_matrix = np.stack([np.array(x) for x in list(zip(*results))])
@@ -809,7 +822,7 @@ class ShareDummyVecEnv(ShareVecEnv):
     def get_visibility_matrix(self):
         """Returns a stacked edge index matrix across all environments."""
         # Collect edge indices from all environments
-        results = [env.get_visibility_matrix() for env in self.envs]
+        results = [_unwrap_env(env).get_visibility_matrix() for env in self.envs]
         
         # Convert to list of arrays and stack into a single NumPy array
         visibility_matrix = np.stack([np.array(x) for x in list(zip(*results))])
@@ -848,7 +861,7 @@ class ShareDummyVecEnv(ShareVecEnv):
 class ChooseDummyVecEnv(ShareVecEnv):
     def __init__(self, env_fns):
         self.envs = [fn() for fn in env_fns]
-        env = self.envs[0]
+        env = _unwrap_env(self.envs[0])
         ShareVecEnv.__init__(self, len(
             env_fns), env.observation_space, env.share_observation_space, env.action_space)
         self.actions = None
@@ -885,7 +898,7 @@ class ChooseDummyVecEnv(ShareVecEnv):
 class ChooseSimpleDummyVecEnv(ShareVecEnv):
     def __init__(self, env_fns):
         self.envs = [fn() for fn in env_fns]
-        env = self.envs[0]
+        env = _unwrap_env(self.envs[0])
         ShareVecEnv.__init__(self, len(
             env_fns), env.observation_space, env.share_observation_space, env.action_space)
         self.actions = None
