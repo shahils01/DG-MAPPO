@@ -30,6 +30,7 @@ class LongRangePredatorPreyConfig:
     episode_length: int = 200
     obs_radius: float = 1.8
     comm_radius: float = 2.2
+    ensure_connected_comm_graph: bool = True
     capture_radius: float = 0.35
     capture_k: int = 2
     predator_max_speed: float = 0.22
@@ -178,7 +179,62 @@ class LongRangePredatorPreyTorchCore:
     def get_visibility_matrix(self) -> torch.Tensor:
         pred_xy = self.predator_pose[:, :, :2]
         dist = torch.cdist(pred_xy, pred_xy)
-        return (dist <= self.cfg.comm_radius).float()
+        adj = (dist <= self.cfg.comm_radius).float()
+        if self.cfg.ensure_connected_comm_graph:
+            adj = self._ensure_connected_adjacency(adj, dist)
+        return adj
+
+    def _ensure_connected_adjacency(self, adj: torch.Tensor, dist: torch.Tensor) -> torch.Tensor:
+        if self.n_predators <= 1:
+            return adj
+
+        adj = adj.clone()
+        for env_i in range(self.n_envs):
+            env_adj = adj[env_i]
+            env_dist = dist[env_i]
+            seen = [False] * self.n_predators
+            components = []
+
+            for start in range(self.n_predators):
+                if seen[start]:
+                    continue
+                stack = [start]
+                seen[start] = True
+                comp = []
+                while stack:
+                    node = stack.pop()
+                    comp.append(node)
+                    neighbors = torch.nonzero(env_adj[node] > 0, as_tuple=False).flatten().tolist()
+                    for nbr in neighbors:
+                        if nbr == node or seen[nbr]:
+                            continue
+                        seen[nbr] = True
+                        stack.append(nbr)
+                components.append(comp)
+
+            while len(components) > 1:
+                best = None
+                for comp_i, comp_a in enumerate(components[:-1]):
+                    for comp_j in range(comp_i + 1, len(components)):
+                        comp_b = components[comp_j]
+                        for a in comp_a:
+                            for b in comp_b:
+                                d = float(env_dist[a, b].item())
+                                if best is None or d < best[0]:
+                                    best = (d, comp_i, comp_j, a, b)
+
+                if best is None:
+                    break
+
+                _, comp_i, comp_j, a, b = best
+                env_adj[a, b] = 1.0
+                env_adj[b, a] = 1.0
+                components[comp_i].extend(components[comp_j])
+                components.pop(comp_j)
+
+            env_adj.fill_diagonal_(1.0)
+
+        return adj
 
     def get_edge_index_matrix(self, faulty_node: Optional[int] = None) -> torch.Tensor:
         adj = self.get_visibility_matrix()

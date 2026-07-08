@@ -32,6 +32,7 @@ def parse_args():
     parser.add_argument("--episode_length", type=int, default=200)
     parser.add_argument("--world_size", type=float, default=6.0)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--disable_connected_comm_graph", action="store_true")
     parser.add_argument("--policy", choices=["chase", "random", "zero"], default="chase")
     parser.add_argument("--random_action_scale", type=float, default=0.35)
     parser.add_argument("--save_every_frame", action="store_true")
@@ -99,6 +100,7 @@ def main():
         num_prey=args.num_prey,
         episode_length=args.episode_length,
         world_size=args.world_size,
+        ensure_connected_comm_graph=not args.disable_connected_comm_graph,
         device=args.device,
         disable_env_checker=True,
     )

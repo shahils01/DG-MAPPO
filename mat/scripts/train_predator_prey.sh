@@ -18,6 +18,7 @@ num_prey="${NUM_PREY:-2}"
 world_size="${WORLD_SIZE:-6.0}"
 obs_radius="${OBS_RADIUS:-1.8}"
 comm_radius="${COMM_RADIUS:-2.2}"
+ensure_connected_comm_graph="${ENSURE_CONNECTED_COMM_GRAPH:-True}"
 capture_radius="${CAPTURE_RADIUS:-0.35}"
 capture_k="${CAPTURE_K:-2}"
 prey_speed_ratio="${PREY_SPEED_RATIO:-0.85}"
@@ -32,6 +33,12 @@ user_name="${USER_NAME:-xxx}"
 
 echo "env=${env}, scenario=${scenario}, algo=${algo}, exp=${exp}, seed=${seed}"
 echo "num_predators=${num_predators}, num_prey=${num_prey}, comm_radius=${comm_radius}, obs_radius=${obs_radius}"
+
+graph_args=""
+if [ "${ensure_connected_comm_graph}" = "False" ] || [ "${ensure_connected_comm_graph}" = "false" ] || [ "${ensure_connected_comm_graph}" = "0" ]; then
+  graph_args="--disable_connected_comm_graph"
+  echo "connected communication graph guarantee disabled"
+fi
 
 model_args=""
 if [ -n "${model_dir}" ]; then
@@ -56,6 +63,7 @@ python train/train_long_range_predator_prey.py \
  --world_size "${world_size}" \
  --obs_radius "${obs_radius}" \
  --comm_radius "${comm_radius}" \
+ ${graph_args} \
  --capture_radius "${capture_radius}" \
  --capture_k "${capture_k}" \
  --prey_speed_ratio "${prey_speed_ratio}" \

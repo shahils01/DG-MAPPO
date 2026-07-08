@@ -34,6 +34,7 @@ def make_env_kwargs(all_args, seed):
         "episode_length": all_args.episode_length,
         "obs_radius": all_args.obs_radius,
         "comm_radius": all_args.comm_radius,
+        "ensure_connected_comm_graph": all_args.ensure_connected_comm_graph,
         "capture_radius": all_args.capture_radius,
         "capture_k": all_args.capture_k,
         "predator_max_speed": all_args.predator_max_speed,
@@ -130,6 +131,7 @@ def parse_args(args, parser):
     parser.add_argument("--env_dt", type=float, default=0.1)
     parser.add_argument("--obs_radius", type=float, default=1.8)
     parser.add_argument("--comm_radius", type=float, default=2.2)
+    parser.add_argument("--disable_connected_comm_graph", action="store_false", dest="ensure_connected_comm_graph", default=True)
     parser.add_argument("--capture_radius", type=float, default=0.35)
     parser.add_argument("--capture_k", type=int, default=2)
     parser.add_argument("--predator_max_speed", type=float, default=0.22)
