@@ -47,6 +47,14 @@ def make_env_kwargs(all_args, seed):
     }
 
 
+def seed_env(env, seed):
+    target = getattr(env, "unwrapped", env)
+    if hasattr(target, "seed"):
+        target.seed(seed)
+    else:
+        env.reset(seed=seed)
+
+
 def make_train_env(all_args):
     def get_env_fn(rank):
         def init_env():
@@ -57,7 +65,7 @@ def make_train_env(all_args):
                 disable_env_checker=True,
                 **make_env_kwargs(all_args, all_args.seed + rank * 1000),
             )
-            env.seed(all_args.seed + rank * 1000)
+            seed_env(env, all_args.seed + rank * 1000)
             return env
 
         return init_env
@@ -77,7 +85,7 @@ def make_eval_env(all_args):
                 disable_env_checker=True,
                 **make_env_kwargs(all_args, all_args.seed * 50000 + rank * 10000),
             )
-            env.seed(all_args.seed * 50000 + rank * 10000)
+            seed_env(env, all_args.seed * 50000 + rank * 10000)
             return env
 
         return init_env
