@@ -12,6 +12,7 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
+from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
@@ -69,6 +70,25 @@ def make_actions(env, policy, scale):
     return scripted_chase_actions(env)
 
 
+def save_gif(output, frames, fps):
+    duration_ms = int(round(1000.0 / max(fps, 1)))
+    images = [Image.fromarray(np.asarray(frame, dtype=np.uint8), mode="RGB") for frame in frames]
+    images[0].save(
+        output,
+        save_all=True,
+        append_images=images[1:],
+        duration=duration_ms,
+        loop=0,
+        optimize=False,
+        disposal=2,
+    )
+
+
+def validate_image(output):
+    with Image.open(output) as image:
+        image.verify()
+
+
 def main():
     args = parse_args()
     np.random.seed(args.seed)
@@ -102,25 +122,23 @@ def main():
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        import imageio.v2 as imageio
-    except ImportError as exc:
-        raise SystemExit("imageio is required for saving renders. Install it with `pip install imageio`.") from exc
-
     if output.suffix.lower() == ".gif":
-        imageio.mimsave(output, frames, fps=args.fps)
+        save_gif(output, frames, args.fps)
     elif output.suffix.lower() in {".png", ".jpg", ".jpeg"}:
-        imageio.imwrite(output, frames[-1])
+        Image.fromarray(np.asarray(frames[-1], dtype=np.uint8), mode="RGB").save(output)
     else:
         output.mkdir(parents=True, exist_ok=True)
         for i, frame in enumerate(frames):
-            imageio.imwrite(output / f"frame_{i:04d}.png", frame)
+            Image.fromarray(np.asarray(frame, dtype=np.uint8), mode="RGB").save(output / f"frame_{i:04d}.png")
 
     if args.save_every_frame and output.suffix.lower() != "":
         frame_dir = output.with_suffix("")
         frame_dir.mkdir(parents=True, exist_ok=True)
         for i, frame in enumerate(frames):
-            imageio.imwrite(frame_dir / f"frame_{i:04d}.png", frame)
+            Image.fromarray(np.asarray(frame, dtype=np.uint8), mode="RGB").save(frame_dir / f"frame_{i:04d}.png")
+
+    if output.suffix.lower() in {".gif", ".png", ".jpg", ".jpeg"}:
+        validate_image(output)
 
     env.close()
     print(f"saved {output}")
