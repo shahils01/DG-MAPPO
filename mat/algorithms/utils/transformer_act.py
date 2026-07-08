@@ -105,7 +105,7 @@ def continuous_parallel_act(decoder, obs_rep, obs, action, batch_size, n_agent, 
     shifted_action = torch.zeros((batch_size, n_agent, action_dim)).to(**tpdv)
     shifted_action[:, 1:, :] = action[:, :-1, :]
 
-    act_mean = decoder(None, None, obs) 
+    act_mean = decoder(shifted_action, obs_rep, obs)
     action_std = torch.sigmoid(decoder.log_std) * 0.5
     
     distri = Normal(act_mean, action_std)
