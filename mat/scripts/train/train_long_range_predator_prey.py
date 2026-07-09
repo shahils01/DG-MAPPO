@@ -57,6 +57,26 @@ def seed_env(env, seed):
         env.reset(seed=seed)
 
 
+def env_device_uses_cuda(all_args):
+    return str(getattr(all_args, "env_device", "cpu")).lower().startswith("cuda")
+
+
+def make_vec_env(env_fns, num_threads, all_args, label):
+    if num_threads == 1:
+        return ShareDummyVecEnv(env_fns)
+
+    if env_device_uses_cuda(all_args):
+        print(
+            f"predator-prey warning: env_device={all_args.env_device} was requested "
+            f"with {num_threads} {label} rollout threads. CUDA environments cannot "
+            "safely run inside this repo's multiprocessing rollout workers, so "
+            "ShareDummyVecEnv will be used instead of ShareSubprocVecEnv."
+        )
+        return ShareDummyVecEnv(env_fns)
+
+    return ShareSubprocVecEnv(env_fns)
+
+
 def optional_wandb(use_wandb):
     if use_wandb:
         import wandb
@@ -104,9 +124,8 @@ def make_train_env(all_args):
 
         return init_env
 
-    if all_args.n_rollout_threads == 1:
-        return ShareDummyVecEnv([get_env_fn(0)])
-    return ShareSubprocVecEnv([get_env_fn(i) for i in range(all_args.n_rollout_threads)])
+    env_fns = [get_env_fn(i) for i in range(all_args.n_rollout_threads)]
+    return make_vec_env(env_fns, all_args.n_rollout_threads, all_args, "training")
 
 
 def make_eval_env(all_args):
@@ -118,9 +137,8 @@ def make_eval_env(all_args):
 
         return init_env
 
-    if all_args.n_eval_rollout_threads == 1:
-        return ShareDummyVecEnv([get_env_fn(0)])
-    return ShareSubprocVecEnv([get_env_fn(i) for i in range(all_args.n_eval_rollout_threads)])
+    env_fns = [get_env_fn(i) for i in range(all_args.n_eval_rollout_threads)]
+    return make_vec_env(env_fns, all_args.n_eval_rollout_threads, all_args, "eval")
 
 
 def parse_args(args, parser):
