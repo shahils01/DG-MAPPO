@@ -9,12 +9,13 @@ scenario="LongRangePredatorPreyContinuous-v0"
 # Example:
 #   MODEL_DIR=results/long_range_predator_prey/.../models/transformer_10.pt sh eval_predator_prey.sh
 # If MODEL_DIR is unset, evaluation uses random initialized weights and prints a warning.
-algo="${ALGO:-mappo_dgnn_dsgd}"
+algo="${ALGO:-mat}"
 exp="${EXP:-eval}"
 seed="${SEED:-1}"
-model_dir="${MODEL_DIR:-}"
+model_dir="${MODEL_DIR:-/home/i2r/shahil_ws/DG-MAPPO/mat/scripts/results/long_range_predator_prey/LongRangePredatorPreyContinuous-v0/6pred_2prey/mat/single/wandb/run-20260708_162333-2k769eik/files/transformer_15800.pt}"
 
 num_predators="${NUM_PREDATORS:-6}"
+predator_max_speed="${predator_max_speed:-0.7}"
 num_prey="${NUM_PREY:-2}"
 world_size="${WORLD_SIZE:-6.0}"
 obs_radius="${OBS_RADIUS:-1.8}"
@@ -30,7 +31,7 @@ hidden_dim="${HIDDEN_DIM:-128}"
 eval_episodes="${EVAL_EPISODES:-5}"
 episode_length="${EPISODE_LENGTH:-200}"
 env_episode_length="${ENV_EPISODE_LENGTH:-${episode_length}}"
-render_mode="${RENDER_MODE:-gif}"
+render_mode="${RENDER_MODE:-human}"
 render_fps="${RENDER_FPS:-10}"
 output_dir="${EVAL_OUTPUT_DIR:-}"
 gif_prefix="${GIF_PREFIX:-eval}"
@@ -67,6 +68,7 @@ python eval/eval_long_range_predator_prey.py \
  --experiment_name "${exp}" \
  --scenario "${scenario}" \
  --num_predators "${num_predators}" \
+ --predator_max_speed "${predator_max_speed}" \
  --num_prey "${num_prey}" \
  --world_size "${world_size}" \
  --obs_radius "${obs_radius}" \

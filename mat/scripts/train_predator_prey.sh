@@ -14,6 +14,7 @@ seed="${SEED:-1}"
 model_dir="${MODEL_DIR:-}"
 
 num_predators="${NUM_PREDATORS:-6}"
+predator_max_speed="${predator_max_speed:-0.7}"
 num_prey="${NUM_PREY:-2}"
 world_size="${WORLD_SIZE:-6.0}"
 obs_radius="${OBS_RADIUS:-1.8}"
@@ -65,6 +66,7 @@ python train/train_long_range_predator_prey.py \
  --experiment_name "${exp}" \
  --scenario "${scenario}" \
  --num_predators "${num_predators}" \
+ --predator_max_speed "${predator_max_speed}" \
  --num_prey "${num_prey}" \
  --world_size "${world_size}" \
  --obs_radius "${obs_radius}" \
