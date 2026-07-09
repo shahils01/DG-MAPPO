@@ -446,14 +446,15 @@ class LongRangePredatorPreyTorchCore:
 
         rel_pred = pred_xy.unsqueeze(1) - pred_xy.unsqueeze(2)
         pred_dist = torch.norm(rel_pred, dim=-1, keepdim=True)
-        pred_visible = (pred_dist <= self.obs_radius()).float()
-        pred_comm = self.get_visibility_matrix().unsqueeze(-1)
+        pred_observable = (pred_dist <= self.cfg.comm_radius).float()
+        masked_rel_pred = rel_pred * pred_observable
+        masked_pred_dist = pred_dist * pred_observable
         pred_feats = torch.cat(
             [
-                rel_pred / self.half_world,
-                pred_dist / self.cfg.world_size,
-                pred_visible,
-                pred_comm,
+                masked_rel_pred / self.half_world,
+                masked_pred_dist / self.cfg.world_size,
+                pred_observable,
+                pred_observable,
             ],
             dim=-1,
         ).reshape(self.n_envs, self.n_predators, -1)
@@ -462,10 +463,12 @@ class LongRangePredatorPreyTorchCore:
         prey_dist = torch.norm(rel_prey, dim=-1, keepdim=True)
         prey_visible = ((prey_dist <= self.cfg.obs_radius) & self.prey_alive.unsqueeze(1).unsqueeze(-1)).float()
         prey_alive = self.prey_alive.float().unsqueeze(1).unsqueeze(-1).repeat(1, self.n_predators, 1, 1)
+        masked_rel_prey = rel_prey * prey_visible
+        masked_prey_dist = prey_dist * prey_visible
         prey_feats = torch.cat(
             [
-                rel_prey / self.half_world,
-                prey_dist / self.cfg.world_size,
+                masked_rel_prey / self.half_world,
+                masked_prey_dist / self.cfg.world_size,
                 prey_visible,
                 prey_alive,
             ],
