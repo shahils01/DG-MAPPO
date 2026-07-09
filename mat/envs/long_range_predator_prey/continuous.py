@@ -116,9 +116,6 @@ class LongRangePredatorPreyTorchCore:
         self.prey_pose[env_ids, :, 2] = prey_theta
         self.prey_alive[env_ids] = True
         self._resolve_prey_collisions(env_ids)
-        self._ensure_prey_visible(env_ids)
-        self._resolve_prey_collisions(env_ids)
-        self._ensure_prey_visible(env_ids)
         self.steps[env_ids] = 0
         self.prev_min_dist[env_ids] = self._predator_prey_dist(env_ids).amin(dim=1)
         return self.get_obs()
@@ -133,9 +130,6 @@ class LongRangePredatorPreyTorchCore:
         self._resolve_predator_collisions()
         self._step_prey()
         self._resolve_prey_collisions()
-        self._ensure_prey_visible()
-        self._resolve_prey_collisions()
-        self._ensure_prey_visible()
         new_captures, close_counts = self._update_captures()
         self.steps += 1
 
@@ -420,60 +414,6 @@ class LongRangePredatorPreyTorchCore:
         else:
             self.prey_pose[env_ids, :, :2] = prey_xy
 
-    def _ensure_prey_visible(self, env_ids: Optional[torch.Tensor] = None) -> None:
-        """Move unseen live prey back inside at least one predator's observation radius."""
-        if not self.cfg.ensure_prey_visible or self.n_predators < 1 or self.n_prey < 1:
-            return
-
-        if env_ids is None:
-            pred_xy = self.predator_pose[:, :, :2]
-            prey_xy = self.prey_pose[:, :, :2]
-            prey_alive = self.prey_alive
-        else:
-            env_ids = env_ids.to(device=self.device, dtype=torch.long)
-            pred_xy = self.predator_pose[env_ids, :, :2]
-            prey_xy = self.prey_pose[env_ids, :, :2]
-            prey_alive = self.prey_alive[env_ids]
-
-        dist = torch.cdist(pred_xy, prey_xy)
-        visible = dist <= self.cfg.obs_radius
-        needs_move = prey_alive & ~visible.any(dim=1)
-        if not bool(needs_move.any().item()):
-            return
-
-        nearest_pred_idx = dist.argmin(dim=1)
-        nearest_pred_xy = pred_xy.gather(
-            1,
-            nearest_pred_idx.unsqueeze(-1).expand(-1, -1, 2),
-        )
-
-        direction = prey_xy - nearest_pred_xy
-        direction_norm = torch.norm(direction, dim=-1, keepdim=True)
-        fallback_angle = torch.linspace(
-            0.0,
-            2.0 * torch.pi,
-            self.n_prey + 1,
-            device=self.device,
-        )[:-1].view(1, self.n_prey)
-        fallback = torch.stack([torch.cos(fallback_angle), torch.sin(fallback_angle)], dim=-1)
-        direction = torch.where(
-            direction_norm > 1e-6,
-            direction / direction_norm.clamp_min(1e-6),
-            fallback.expand_as(direction),
-        )
-
-        target_dist = min(
-            max(float(self.cfg.capture_radius) * 1.5, float(self.cfg.collision_radius) * 2.0, 1e-3),
-            max(float(self.cfg.obs_radius) * 0.85, 1e-3),
-        )
-        visible_xy = self._clamp_xy(nearest_pred_xy + direction * target_dist)
-        prey_xy = torch.where(needs_move.unsqueeze(-1), visible_xy, prey_xy)
-
-        if env_ids is None:
-            self.prey_pose[:, :, :2] = prey_xy
-        else:
-            self.prey_pose[env_ids, :, :2] = prey_xy
-
     def _predator_prey_dist(self, env_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         if env_ids is None:
             pred_xy = self.predator_pose[:, :, :2]
@@ -522,7 +462,7 @@ class LongRangePredatorPreyTorchCore:
 
         rel_prey = prey_xy.unsqueeze(1) - pred_xy.unsqueeze(2)
         prey_dist = torch.norm(rel_prey, dim=-1, keepdim=True)
-        prey_visible = ((prey_dist <= self.cfg.obs_radius) & self.prey_alive.unsqueeze(1).unsqueeze(-1)).float()
+        prey_visible = self._prey_visible_by_predator(prey_dist.squeeze(-1)).unsqueeze(-1).float()
         prey_alive = self.prey_alive.float().unsqueeze(1).unsqueeze(-1).repeat(1, self.n_predators, 1, 1)
         masked_rel_prey = rel_prey * prey_visible
         masked_prey_dist = prey_dist * prey_visible
@@ -608,9 +548,22 @@ class LongRangePredatorPreyTorchCore:
             infos.append(env_infos)
         return infos
 
-    def _prey_visible_by_predator(self) -> torch.Tensor:
-        dist = self._predator_prey_dist()
-        return (dist <= self.cfg.obs_radius) & self.prey_alive.unsqueeze(1)
+    def _prey_visible_by_predator(self, dist: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if dist is None:
+            dist = self._predator_prey_dist()
+
+        visible = (dist <= self.cfg.obs_radius) & self.prey_alive.unsqueeze(1)
+        if not self.cfg.ensure_prey_visible or self.n_predators < 1 or self.n_prey < 1:
+            return visible
+
+        needs_reveal = self.prey_alive & ~visible.any(dim=1)
+        if not bool(needs_reveal.any().item()):
+            return visible
+
+        nearest_pred = dist.argmin(dim=1)
+        forced_visible = torch.zeros_like(visible)
+        forced_visible.scatter_(1, nearest_pred.unsqueeze(1), needs_reveal.unsqueeze(1))
+        return visible | forced_visible
 
     @staticmethod
     def _draw_disk(canvas: np.ndarray, center: np.ndarray, radius: int, color: np.ndarray) -> None:
