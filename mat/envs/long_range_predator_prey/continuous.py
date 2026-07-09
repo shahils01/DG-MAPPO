@@ -31,6 +31,7 @@ class LongRangePredatorPreyConfig:
     obs_radius: float = 1.8
     comm_radius: float = 2.2
     ensure_connected_comm_graph: bool = True
+    ensure_prey_visible: bool = True
     capture_radius: float = 0.35
     capture_k: int = 2
     predator_max_speed: float = 0.22
@@ -115,6 +116,9 @@ class LongRangePredatorPreyTorchCore:
         self.prey_pose[env_ids, :, 2] = prey_theta
         self.prey_alive[env_ids] = True
         self._resolve_prey_collisions(env_ids)
+        self._ensure_prey_visible(env_ids)
+        self._resolve_prey_collisions(env_ids)
+        self._ensure_prey_visible(env_ids)
         self.steps[env_ids] = 0
         self.prev_min_dist[env_ids] = self._predator_prey_dist(env_ids).amin(dim=1)
         return self.get_obs()
@@ -129,6 +133,9 @@ class LongRangePredatorPreyTorchCore:
         self._resolve_predator_collisions()
         self._step_prey()
         self._resolve_prey_collisions()
+        self._ensure_prey_visible()
+        self._resolve_prey_collisions()
+        self._ensure_prey_visible()
         new_captures, close_counts = self._update_captures()
         self.steps += 1
 
@@ -413,6 +420,60 @@ class LongRangePredatorPreyTorchCore:
         else:
             self.prey_pose[env_ids, :, :2] = prey_xy
 
+    def _ensure_prey_visible(self, env_ids: Optional[torch.Tensor] = None) -> None:
+        """Move unseen live prey back inside at least one predator's observation radius."""
+        if not self.cfg.ensure_prey_visible or self.n_predators < 1 or self.n_prey < 1:
+            return
+
+        if env_ids is None:
+            pred_xy = self.predator_pose[:, :, :2]
+            prey_xy = self.prey_pose[:, :, :2]
+            prey_alive = self.prey_alive
+        else:
+            env_ids = env_ids.to(device=self.device, dtype=torch.long)
+            pred_xy = self.predator_pose[env_ids, :, :2]
+            prey_xy = self.prey_pose[env_ids, :, :2]
+            prey_alive = self.prey_alive[env_ids]
+
+        dist = torch.cdist(pred_xy, prey_xy)
+        visible = dist <= self.cfg.obs_radius
+        needs_move = prey_alive & ~visible.any(dim=1)
+        if not bool(needs_move.any().item()):
+            return
+
+        nearest_pred_idx = dist.argmin(dim=1)
+        nearest_pred_xy = pred_xy.gather(
+            1,
+            nearest_pred_idx.unsqueeze(-1).expand(-1, -1, 2),
+        )
+
+        direction = prey_xy - nearest_pred_xy
+        direction_norm = torch.norm(direction, dim=-1, keepdim=True)
+        fallback_angle = torch.linspace(
+            0.0,
+            2.0 * torch.pi,
+            self.n_prey + 1,
+            device=self.device,
+        )[:-1].view(1, self.n_prey)
+        fallback = torch.stack([torch.cos(fallback_angle), torch.sin(fallback_angle)], dim=-1)
+        direction = torch.where(
+            direction_norm > 1e-6,
+            direction / direction_norm.clamp_min(1e-6),
+            fallback.expand_as(direction),
+        )
+
+        target_dist = min(
+            max(float(self.cfg.capture_radius) * 1.5, float(self.cfg.collision_radius) * 2.0, 1e-3),
+            max(float(self.cfg.obs_radius) * 0.85, 1e-3),
+        )
+        visible_xy = self._clamp_xy(nearest_pred_xy + direction * target_dist)
+        prey_xy = torch.where(needs_move.unsqueeze(-1), visible_xy, prey_xy)
+
+        if env_ids is None:
+            self.prey_pose[:, :, :2] = prey_xy
+        else:
+            self.prey_pose[env_ids, :, :2] = prey_xy
+
     def _predator_prey_dist(self, env_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         if env_ids is None:
             pred_xy = self.predator_pose[:, :, :2]
@@ -518,6 +579,8 @@ class LongRangePredatorPreyTorchCore:
         comm = self.get_visibility_matrix()
         for env_i in range(self.n_envs):
             env_infos = []
+            prey_visible_by_any = visible[env_i].any(dim=0)
+            live_prey_visible_by_any = prey_visible_by_any | ~self.prey_alive[env_i]
             for agent_i in range(self.n_predators):
                 env_infos.append(
                     {
@@ -528,6 +591,10 @@ class LongRangePredatorPreyTorchCore:
                             1.0 - self.prey_alive[env_i].float().mean().item()
                         ),
                         "collision_count": int(self.last_collision_count[env_i].item()),
+                        "all_live_prey_visible": bool(live_prey_visible_by_any.all().item()),
+                        "live_prey_visible_count": int(
+                            (prey_visible_by_any & self.prey_alive[env_i]).sum().item()
+                        ),
                         "prey_seen_by_agent": bool(visible[env_i, agent_i].any().item()),
                         "comm_degree": int(comm[env_i, agent_i].sum().item()),
                         "max_capture_group": int(close_counts[env_i].max().item()),

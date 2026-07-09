@@ -20,6 +20,7 @@ world_size="${WORLD_SIZE:-6.0}"
 obs_radius="${OBS_RADIUS:-1.8}"
 comm_radius="${COMM_RADIUS:-2.2}"
 ensure_connected_comm_graph="${ENSURE_CONNECTED_COMM_GRAPH:-True}"
+ensure_prey_visible="${ENSURE_PREY_VISIBLE:-True}"
 capture_radius="${CAPTURE_RADIUS:-0.35}"
 capture_k="${CAPTURE_K:-2}"
 prey_speed_ratio="${PREY_SPEED_RATIO:-0.85}"
@@ -47,6 +48,12 @@ if [ "${ensure_connected_comm_graph}" = "False" ] || [ "${ensure_connected_comm_
   echo "connected communication graph guarantee disabled"
 fi
 
+visibility_args=""
+if [ "${ensure_prey_visible}" = "False" ] || [ "${ensure_prey_visible}" = "false" ] || [ "${ensure_prey_visible}" = "0" ]; then
+  visibility_args="--disable_prey_visibility_guarantee"
+  echo "prey visibility guarantee disabled"
+fi
+
 model_args=""
 if [ -n "${model_dir}" ]; then
   model_args="--model_dir ${model_dir}"
@@ -72,6 +79,7 @@ python train/train_long_range_predator_prey.py \
  --obs_radius "${obs_radius}" \
  --comm_radius "${comm_radius}" \
  ${graph_args} \
+ ${visibility_args} \
  --capture_radius "${capture_radius}" \
  --capture_k "${capture_k}" \
  --prey_speed_ratio "${prey_speed_ratio}" \
