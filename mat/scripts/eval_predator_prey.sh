@@ -29,6 +29,7 @@ env_device="${ENV_DEVICE:-cpu}"
 hidden_dim="${HIDDEN_DIM:-128}"
 eval_episodes="${EVAL_EPISODES:-5}"
 episode_length="${EPISODE_LENGTH:-200}"
+env_episode_length="${ENV_EPISODE_LENGTH:-${episode_length}}"
 render_mode="${RENDER_MODE:-gif}"
 render_fps="${RENDER_FPS:-10}"
 output_dir="${EVAL_OUTPUT_DIR:-}"
@@ -38,6 +39,7 @@ user_name="${USER_NAME:-xxx}"
 echo "env=${env}, scenario=${scenario}, algo=${algo}, exp=${exp}, seed=${seed}"
 echo "num_predators=${num_predators}, num_prey=${num_prey}, comm_radius=${comm_radius}, obs_radius=${obs_radius}"
 echo "render_mode=${render_mode}, render_fps=${render_fps}"
+echo "rollout episode_length=${episode_length}, env_episode_length=${env_episode_length}"
 
 graph_args=""
 if [ "${ensure_connected_comm_graph}" = "False" ] || [ "${ensure_connected_comm_graph}" = "false" ] || [ "${ensure_connected_comm_graph}" = "0" ]; then
@@ -91,6 +93,7 @@ python eval/eval_long_range_predator_prey.py \
  --num_mini_batch 1 \
  --mini_batch_size 4000 \
  --episode_length "${episode_length}" \
+ --env_episode_length "${env_episode_length}" \
  --ppo_epoch 10 \
  --gamma 0.99 \
  --gae_lambda 0.95 \

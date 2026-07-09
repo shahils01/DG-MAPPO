@@ -32,7 +32,7 @@ def make_env_kwargs(all_args, seed):
         "num_prey": all_args.num_prey,
         "world_size": all_args.world_size,
         "dt": all_args.env_dt,
-        "episode_length": all_args.episode_length,
+        "episode_length": getattr(all_args, "env_episode_length", all_args.episode_length),
         "obs_radius": all_args.obs_radius,
         "comm_radius": all_args.comm_radius,
         "ensure_connected_comm_graph": all_args.ensure_connected_comm_graph,
@@ -167,6 +167,12 @@ def parse_args(args, parser):
     parser.add_argument("--num_prey", type=int, default=2)
     parser.add_argument("--world_size", type=float, default=6.0)
     parser.add_argument("--env_dt", type=float, default=0.1)
+    parser.add_argument(
+        "--env_episode_length",
+        type=int,
+        default=None,
+        help="Predator-prey max simulation steps before env timeout. Defaults to --episode_length.",
+    )
     parser.add_argument("--obs_radius", type=float, default=1.8)
     parser.add_argument("--comm_radius", type=float, default=2.2)
     parser.add_argument("--disable_connected_comm_graph", action="store_false", dest="ensure_connected_comm_graph", default=True)
@@ -187,6 +193,8 @@ def parse_args(args, parser):
     parser.add_argument("--use_mustalive", action="store_false", default=True)
 
     all_args = parser.parse_known_args(args)[0]
+    if all_args.env_episode_length is None:
+        all_args.env_episode_length = all_args.episode_length
     if all_args.eval_faulty_node is None:
         all_args.eval_faulty_node = [-1]
     return all_args

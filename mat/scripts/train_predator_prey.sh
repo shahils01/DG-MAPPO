@@ -27,6 +27,8 @@ env_device="${ENV_DEVICE:-cpu}"
 n_training_threads="${N_TRAINING_THREADS:-32}"
 n_rollout_threads="${N_ROLLOUT_THREADS:-32}"
 n_eval_rollout_threads="${N_EVAL_ROLLOUT_THREADS:-1}"
+episode_length="${EPISODE_LENGTH:-200}"
+env_episode_length="${ENV_EPISODE_LENGTH:-${episode_length}}"
 
 faulty_node="${FAULTY_NODE:--1}"
 eval_faulty_node="${EVAL_FAULTY_NODE:--1}"
@@ -36,6 +38,7 @@ user_name="${USER_NAME:-xxx}"
 
 echo "env=${env}, scenario=${scenario}, algo=${algo}, exp=${exp}, seed=${seed}"
 echo "num_predators=${num_predators}, num_prey=${num_prey}, comm_radius=${comm_radius}, obs_radius=${obs_radius}"
+echo "rollout episode_length=${episode_length}, env_episode_length=${env_episode_length}"
 
 graph_args=""
 if [ "${ensure_connected_comm_graph}" = "False" ] || [ "${ensure_connected_comm_graph}" = "false" ] || [ "${ensure_connected_comm_graph}" = "0" ]; then
@@ -89,7 +92,8 @@ python train/train_long_range_predator_prey.py \
  --n_eval_rollout_threads "${n_eval_rollout_threads}" \
  --num_mini_batch 1 \
  --mini_batch_size 4000 \
- --episode_length 200 \
+ --episode_length "${episode_length}" \
+ --env_episode_length "${env_episode_length}" \
  --eval_interval 25 \
  --num_env_steps 200000000 \
  --ppo_epoch 10 \

@@ -273,7 +273,7 @@ def rollout_episode(all_args, envs, actor, device, episode_idx, run_dir, human_r
     )
     masks = torch.ones((1, envs.n_agents, 1), dtype=torch.float32, device=device)
 
-    for step in range(all_args.episode_length):
+    for step in range(all_args.env_episode_length):
         if all_args.render_mode == "gif":
             frames.append(envs.render(mode="rgb_array")[0])
         elif all_args.render_mode == "human":

@@ -30,6 +30,7 @@ def parse_args():
     parser.add_argument("--num_predators", type=int, default=6)
     parser.add_argument("--num_prey", type=int, default=2)
     parser.add_argument("--episode_length", type=int, default=200)
+    parser.add_argument("--env_episode_length", type=int, default=None)
     parser.add_argument("--world_size", type=float, default=6.0)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--disable_connected_comm_graph", action="store_true")
@@ -93,12 +94,15 @@ def validate_image(output):
 def main():
     args = parse_args()
     np.random.seed(args.seed)
+    env_episode_length = args.env_episode_length
+    if env_episode_length is None:
+        env_episode_length = args.episode_length
 
     env = gym.make(
         "LongRangePredatorPreyContinuous-v0",
         num_predators=args.num_predators,
         num_prey=args.num_prey,
-        episode_length=args.episode_length,
+        episode_length=env_episode_length,
         world_size=args.world_size,
         ensure_connected_comm_graph=not args.disable_connected_comm_graph,
         device=args.device,
