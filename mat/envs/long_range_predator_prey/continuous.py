@@ -114,6 +114,7 @@ class LongRangePredatorPreyTorchCore:
         self.prey_pose[env_ids, :, :2] = self._clamp_xy(prey_xy)
         self.prey_pose[env_ids, :, 2] = prey_theta
         self.prey_alive[env_ids] = True
+        self._resolve_prey_collisions(env_ids)
         self.steps[env_ids] = 0
         self.prev_min_dist[env_ids] = self._predator_prey_dist(env_ids).amin(dim=1)
         return self.get_obs()
@@ -127,6 +128,7 @@ class LongRangePredatorPreyTorchCore:
         self.last_collision_count = self._collision_count()
         self._resolve_predator_collisions()
         self._step_prey()
+        self._resolve_prey_collisions()
         new_captures, close_counts = self._update_captures()
         self.steps += 1
 
@@ -364,6 +366,52 @@ class LongRangePredatorPreyTorchCore:
         alive = self.prey_alive.unsqueeze(-1)
         self.prey_pose[..., :2] = torch.where(alive, self._clamp_xy(self.prey_pose[..., :2] + dx), self.prey_pose[..., :2])
         self.prey_pose[..., 2] = torch.where(self.prey_alive, theta, self.prey_pose[..., 2])
+
+    def _resolve_prey_collisions(self, env_ids: Optional[torch.Tensor] = None) -> None:
+        """Project overlapping live prey apart."""
+        if self.n_prey < 2 or self.cfg.collision_radius <= 0.0:
+            return
+
+        if env_ids is None:
+            prey_xy = self.prey_pose[:, :, :2]
+            prey_alive = self.prey_alive
+        else:
+            env_ids = env_ids.to(device=self.device, dtype=torch.long)
+            prey_xy = self.prey_pose[env_ids, :, :2]
+            prey_alive = self.prey_alive[env_ids]
+
+        eye = torch.eye(self.n_prey, dtype=torch.bool, device=self.device).unsqueeze(0)
+        alive_pair = prey_alive.unsqueeze(2) & prey_alive.unsqueeze(1)
+        active_pair = alive_pair & ~eye
+
+        base_angle = torch.linspace(
+            0.0,
+            2.0 * torch.pi,
+            self.n_prey + 1,
+            device=self.device,
+        )[:-1]
+        base_dir = torch.stack([torch.cos(base_angle), torch.sin(base_angle)], dim=-1)
+        fallback = base_dir.unsqueeze(1) - base_dir.unsqueeze(0)
+        fallback = fallback / torch.norm(fallback, dim=-1, keepdim=True).clamp_min(1e-6)
+        fallback = fallback.unsqueeze(0)
+        alive = prey_alive.unsqueeze(-1)
+
+        for _ in range(max(int(self.cfg.collision_resolution_iters), 1)):
+            xy = prey_xy
+            diff = xy.unsqueeze(2) - xy.unsqueeze(1)
+            dist = torch.norm(diff, dim=-1, keepdim=True)
+            direction = torch.where(dist > 1e-6, diff / dist.clamp_min(1e-6), fallback)
+
+            overlap = (self.cfg.collision_radius - dist.squeeze(-1)).clamp_min(0.0)
+            overlap = overlap.masked_fill(~active_pair, 0.0)
+            correction = (direction * (0.5 * overlap).unsqueeze(-1)).sum(dim=2)
+            resolved_xy = self._clamp_xy(xy + correction)
+            prey_xy = torch.where(alive, resolved_xy, xy)
+
+        if env_ids is None:
+            self.prey_pose[:, :, :2] = prey_xy
+        else:
+            self.prey_pose[env_ids, :, :2] = prey_xy
 
     def _predator_prey_dist(self, env_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         if env_ids is None:
