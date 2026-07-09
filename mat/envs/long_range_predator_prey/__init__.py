@@ -7,6 +7,7 @@ from mat.envs.long_range_predator_prey.continuous import (
     LongRangePredatorPreyConfig,
     LongRangePredatorPreyTorchCore,
 )
+from mat.envs.long_range_predator_prey.vec_env import LongRangePredatorPreyTorchVecEnv
 
 
 register(
@@ -18,5 +19,6 @@ register(
 __all__ = [
     "LongRangePredatorPreyConfig",
     "LongRangePredatorPreyContinuousEnv",
+    "LongRangePredatorPreyTorchVecEnv",
     "LongRangePredatorPreyTorchCore",
 ]

@@ -24,6 +24,9 @@ capture_k="${CAPTURE_K:-2}"
 prey_speed_ratio="${PREY_SPEED_RATIO:-0.85}"
 collision_radius="${COLLISION_RADIUS:-0.18}"
 env_device="${ENV_DEVICE:-cpu}"
+n_training_threads="${N_TRAINING_THREADS:-32}"
+n_rollout_threads="${N_ROLLOUT_THREADS:-32}"
+n_eval_rollout_threads="${N_EVAL_ROLLOUT_THREADS:-1}"
 
 faulty_node="${FAULTY_NODE:--1}"
 eval_faulty_node="${EVAL_FAULTY_NODE:--1}"
@@ -81,9 +84,9 @@ python train/train_long_range_predator_prey.py \
  --value_loss_coef 1 \
  --max_grad_norm 0.8 \
  --eval_episodes 5 \
- --n_training_threads 32 \
- --n_rollout_threads 32 \
- --n_eval_rollout_threads 1 \
+ --n_training_threads "${n_training_threads}" \
+ --n_rollout_threads "${n_rollout_threads}" \
+ --n_eval_rollout_threads "${n_eval_rollout_threads}" \
  --num_mini_batch 1 \
  --mini_batch_size 4000 \
  --episode_length 200 \

@@ -23,6 +23,7 @@ if str(REPO_ROOT) not in sys.path:
 import mat.envs.long_range_predator_prey  # noqa: F401
 from mat.config import get_config
 from mat.envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
+from mat.envs.long_range_predator_prey import LongRangePredatorPreyTorchVecEnv
 
 
 def make_env_kwargs(all_args, seed):
@@ -65,16 +66,19 @@ def make_vec_env(env_fns, num_threads, all_args, label):
     if num_threads == 1:
         return ShareDummyVecEnv(env_fns)
 
-    if env_device_uses_cuda(all_args):
-        print(
-            f"predator-prey warning: env_device={all_args.env_device} was requested "
-            f"with {num_threads} {label} rollout threads. CUDA environments cannot "
-            "safely run inside this repo's multiprocessing rollout workers, so "
-            "ShareDummyVecEnv will be used instead of ShareSubprocVecEnv."
-        )
-        return ShareDummyVecEnv(env_fns)
-
     return ShareSubprocVecEnv(env_fns)
+
+
+def make_batched_predator_prey_env(all_args, num_envs, seed, label):
+    if all_args.env_name != "long_range_predator_prey":
+        raise NotImplementedError(f"Unsupported env_name: {all_args.env_name}")
+    kwargs = make_env_kwargs(all_args, seed)
+    kwargs["num_envs"] = int(num_envs)
+    print(
+        f"predator-prey: using batched torch VecEnv on {all_args.env_device} "
+        f"for {num_envs} {label} rollout envs."
+    )
+    return LongRangePredatorPreyTorchVecEnv(**kwargs)
 
 
 def optional_wandb(use_wandb):
@@ -116,6 +120,14 @@ def make_predator_prey_env(all_args, seed):
 
 
 def make_train_env(all_args):
+    if env_device_uses_cuda(all_args):
+        return make_batched_predator_prey_env(
+            all_args,
+            all_args.n_rollout_threads,
+            all_args.seed,
+            "training",
+        )
+
     def get_env_fn(rank):
         def init_env():
             if all_args.env_name != "long_range_predator_prey":
@@ -129,6 +141,14 @@ def make_train_env(all_args):
 
 
 def make_eval_env(all_args):
+    if env_device_uses_cuda(all_args):
+        return make_batched_predator_prey_env(
+            all_args,
+            all_args.n_eval_rollout_threads,
+            all_args.seed * 50000,
+            "eval",
+        )
+
     def get_env_fn(rank):
         def init_env():
             if all_args.env_name != "long_range_predator_prey":
