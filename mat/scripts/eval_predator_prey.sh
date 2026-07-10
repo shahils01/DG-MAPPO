@@ -9,10 +9,10 @@ scenario="LongRangePredatorPreyContinuous-v0"
 # Example:
 #   MODEL_DIR=results/long_range_predator_prey/.../models/transformer_10.pt sh eval_predator_prey.sh
 # If MODEL_DIR is unset, evaluation uses random initialized weights and prints a warning.
-algo="${ALGO:-mat_dec}"
+algo="${ALGO:-mappo_dgnn_dsgd}"
 exp="${EXP:-eval}"
 seed="${SEED:-1}"
-model_dir="${MODEL_DIR:-/home/shahils/Desktop/gitBackupRepo/DG-MAPPO/mat/scripts/results/long_range_predator_prey/LongRangePredatorPreyContinuous-v0/6pred_2prey/mat_dec/single/wandb/run-20260710_015435-2jmztir6/files/transformer_8000.pt}"
+model_dir="${MODEL_DIR:-/home/shahils/Desktop/gitBackupRepo/DG-MAPPO/mat/scripts/results/long_range_predator_prey/LongRangePredatorPreyContinuous-v0/6pred_2prey/mappo_dgnn_dsgd/single/wandb/run-20260710_015425-zntft6p3/files/transformer_4300.pt}"
 
 num_predators="${NUM_PREDATORS:-6}"
 predator_max_speed="${PREDATOR_MAX_SPEED:-${predator_max_speed:-0.7}}"
