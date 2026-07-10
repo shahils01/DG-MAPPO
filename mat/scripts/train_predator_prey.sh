@@ -22,7 +22,7 @@ comm_radius="${COMM_RADIUS:-2.2}"
 ensure_connected_comm_graph="${ENSURE_CONNECTED_COMM_GRAPH:-True}"
 ensure_prey_visible="${ENSURE_PREY_VISIBLE:-True}"
 capture_radius="${CAPTURE_RADIUS:-0.35}"
-capture_k="${CAPTURE_K:-2}"
+capture_k="${CAPTURE_K:-1}"
 prey_speed_ratio="${PREY_SPEED_RATIO:-0.85}"
 collision_radius="${COLLISION_RADIUS:-0.18}"
 env_device="${ENV_DEVICE:-cpu}"
@@ -35,8 +35,8 @@ env_episode_length="${ENV_EPISODE_LENGTH:-${episode_length}}"
 faulty_node="${FAULTY_NODE:--1}"
 eval_faulty_node="${EVAL_FAULTY_NODE:--1}"
 hidden_dim="${HIDDEN_DIM:-128}"
-use_wandb="${USE_WANDB:-False}"
-user_name="${USER_NAME:-xxx}"
+use_wandb="${USE_WANDB:-True}"
+user_name="${USER_NAME:-shahil-shaik7-clemson-university}"
 
 echo "env=${env}, scenario=${scenario}, algo=${algo}, exp=${exp}, seed=${seed}"
 echo "num_predators=${num_predators}, num_prey=${num_prey}, comm_radius=${comm_radius}, obs_radius=${obs_radius}"
@@ -88,7 +88,7 @@ python train/train_long_range_predator_prey.py \
  --faulty_node "${faulty_node}" \
  --eval_faulty_node "${eval_faulty_node}" \
  --iterations 3 \
- --gnn_loss_coef 10 \
+ --gnn_loss_coef 1 \
  --critic_lr 5e-04 \
  --lr 5e-04 \
  --n_embd "${hidden_dim}" \
@@ -101,13 +101,13 @@ python train/train_long_range_predator_prey.py \
  --n_rollout_threads "${n_rollout_threads}" \
  --n_eval_rollout_threads "${n_eval_rollout_threads}" \
  --num_mini_batch 1 \
- --mini_batch_size 4000 \
+ --mini_batch_size 6400 \
  --episode_length "${episode_length}" \
  --env_episode_length "${env_episode_length}" \
  --eval_interval 25 \
  --num_env_steps 200000000 \
- --ppo_epoch 10 \
- --gamma 0.99 \
+ --ppo_epoch 15 \
+ --gamma 0.999 \
  --gae_lambda 0.95 \
  --entropy_coef 0.01 \
  --clip_param 0.2 \
