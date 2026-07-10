@@ -214,6 +214,7 @@ class StarCraft2Env(MultiAgentEnv):
         self.add_center_xy = args.add_center_xy
         self.use_stacked_frames = args.use_stacked_frames
         self.stacked_frames = args.stacked_frames
+        self._unit_sight_range = args.unit_sight_range
         
         map_params = get_map_params(self.map_name)
         self.n_agents = map_params["n_agents"]
@@ -921,7 +922,7 @@ class StarCraft2Env(MultiAgentEnv):
 
     def unit_sight_range(self, agent_id):
         """Returns the sight range for an agent."""
-        return 4 # default: 9
+        return self._unit_sight_range
 
     def unit_max_cooldown(self, unit):
         """Returns the maximal cooldown for a unit."""

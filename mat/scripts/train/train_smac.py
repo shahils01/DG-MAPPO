@@ -89,6 +89,8 @@ def make_eval_env(all_args, env_config=None):
 def parse_args(args, parser):
     parser.add_argument('--map_name', type=str, default='3m', help="Which smac map to run on")
     parser.add_argument('--eval_map_name', type=str, default='3m', help="Which smac map to eval on")
+    parser.add_argument('--unit_sight_range', type=float, default=4.0,
+                        help="Sight range used for allied and enemy unit observations")
     parser.add_argument('--run_dir', type=str, default='', help="Which smac map to eval on")
     parser.add_argument("--add_move_state", action='store_true', default=False)
     parser.add_argument("--add_local_obs", action='store_true', default=False)
@@ -104,6 +106,8 @@ def parse_args(args, parser):
     parser.add_argument("--strict_local_obs", type=bool, default=False)
 
     all_args = parser.parse_known_args(args)[0]
+    if all_args.unit_sight_range <= 0:
+        parser.error("--unit_sight_range must be greater than 0")
 
     return all_args
 

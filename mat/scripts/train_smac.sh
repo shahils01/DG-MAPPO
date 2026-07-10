@@ -5,8 +5,9 @@ algo="ippo"
 exp="single"
 seed=0
 hidden_dim=128
+unit_sight_range=4
 
-echo "env is ${env}, map is ${map}, algo is ${algo}, exp is ${exp}, seed is ${seed}"
+echo "env is ${env}, map is ${map}, algo is ${algo}, exp is ${exp}, seed is ${seed}, unit sight range is ${unit_sight_range}"
 CUDA_LAUNCH_BLOCKING=1 python train/train_smac.py \
  --truelyDistributed True \
  --consensusLoss True \
@@ -19,6 +20,7 @@ CUDA_LAUNCH_BLOCKING=1 python train/train_smac.py \
  --experiment_name ${exp} \
  --map_name ${map} \
  --eval_map_name ${map} \
+ --unit_sight_range ${unit_sight_range} \
  --seed ${seed} \
  --n_training_threads 32 \
  --n_rollout_threads 32 \
