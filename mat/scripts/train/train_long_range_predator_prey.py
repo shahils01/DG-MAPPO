@@ -2,6 +2,7 @@
 """Train DG-MAPPO-style algorithms on LongRangePredatorPreyContinuous-v0."""
 
 import os
+import random
 import socket
 import sys
 import types
@@ -24,6 +25,25 @@ import mat.envs.long_range_predator_prey  # noqa: F401
 from mat.config import get_config
 from mat.envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
 from mat.envs.long_range_predator_prey import LongRangePredatorPreyTorchVecEnv
+
+
+def seed_everything(seed, deterministic=False):
+    seed = int(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    if deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        try:
+            torch.use_deterministic_algorithms(True, warn_only=True)
+        except TypeError:
+            torch.use_deterministic_algorithms(True)
 
 
 def make_env_kwargs(all_args, seed):
@@ -61,6 +81,10 @@ def seed_env(env, seed):
         target.seed(seed)
     else:
         env.reset(seed=seed)
+    for space_name in ("action_space", "observation_space", "share_observation_space"):
+        space = getattr(target, space_name, None)
+        if hasattr(space, "seed"):
+            space.seed(int(seed))
 
 
 def env_device_uses_cuda(all_args):
@@ -114,6 +138,7 @@ def optional_wandb(use_wandb):
 
 
 def make_predator_prey_env(all_args, seed):
+    seed_everything(seed, deterministic=False)
     env = gym.make(
         all_args.scenario,
         disable_env_checker=True,
@@ -126,6 +151,7 @@ def make_predator_prey_env(all_args, seed):
 
 def make_train_env(all_args):
     if env_device_uses_cuda(all_args):
+        seed_everything(all_args.seed, deterministic=all_args.cuda_deterministic)
         return make_batched_predator_prey_env(
             all_args,
             all_args.n_rollout_threads,
@@ -147,6 +173,7 @@ def make_train_env(all_args):
 
 def make_eval_env(all_args):
     if env_device_uses_cuda(all_args):
+        seed_everything(all_args.seed * 50000, deterministic=all_args.cuda_deterministic)
         return make_batched_predator_prey_env(
             all_args,
             all_args.n_eval_rollout_threads,
@@ -232,6 +259,7 @@ def main(args):
     parser = get_config()
     all_args = parse_args(args, parser)
     configure_algorithm(all_args)
+    seed_everything(all_args.seed, deterministic=all_args.cuda_deterministic)
 
     wandb = optional_wandb(all_args.use_wandb)
 
@@ -289,10 +317,6 @@ def main(args):
         setproctitle.setproctitle(
             f"{all_args.algorithm_name}-{all_args.env_name}-{all_args.experiment_name}@{all_args.user_name}"
         )
-
-    torch.manual_seed(all_args.seed)
-    torch.cuda.manual_seed_all(all_args.seed)
-    np.random.seed(all_args.seed)
 
     envs = make_train_env(all_args)
     eval_envs = make_eval_env(all_args) if all_args.use_eval else None

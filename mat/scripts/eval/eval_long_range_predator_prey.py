@@ -21,6 +21,7 @@ from mat.scripts.train.train_long_range_predator_prey import (
     make_eval_env,
     optional_wandb,
     parse_args,
+    seed_everything,
 )
 
 optional_wandb(False)
@@ -329,6 +330,7 @@ def write_metrics(path, rows):
 
 def main(args):
     all_args = parse_eval_args(args)
+    seed_everything(all_args.seed, deterministic=all_args.cuda_deterministic)
     optional_wandb(False)
 
     if all_args.cuda and torch.cuda.is_available():
@@ -339,10 +341,6 @@ def main(args):
         device = torch.device("cpu")
         torch.set_num_threads(all_args.n_training_threads)
         print("choose to use cpu...")
-
-    torch.manual_seed(all_args.seed)
-    torch.cuda.manual_seed_all(all_args.seed)
-    np.random.seed(all_args.seed)
 
     run_dir = make_run_dir(all_args)
     envs = make_eval_env(all_args)
