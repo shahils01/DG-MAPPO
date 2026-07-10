@@ -269,7 +269,7 @@ def main(args):
             entity=all_args.user_name,
             notes=socket.gethostname(),
             name=f"{all_args.algorithm_name}_{all_args.experiment_name}_seed{all_args.seed}",
-            group=all_args.env_name,
+            group=all_args.experiment_name,
             dir=str(run_dir),
             job_type="training",
             reinit=True,
