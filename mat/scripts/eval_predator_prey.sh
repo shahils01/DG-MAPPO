@@ -15,9 +15,13 @@ seed="${SEED:-1}"
 model_dir="${MODEL_DIR:-/home/shahils/Desktop/gitBackupRepo/DG-MAPPO/mat/scripts/results/long_range_predator_prey/LongRangePredatorPreyContinuous-v0/6pred_2prey/mat_dec/mat_dec/wandb/run-20260709_164720-nctacaiz/files/transformer_7100.pt}"
 
 num_predators="${NUM_PREDATORS:-8}"
-predator_max_speed="${predator_max_speed:-0.7}"
+predator_max_speed="${PREDATOR_MAX_SPEED:-${predator_max_speed:-0.7}}"
 num_prey="${NUM_PREY:-2}"
 world_size="${WORLD_SIZE:-6.0}"
+random_start_positions="${RANDOM_START_POSITIONS:-False}"
+init_min_predator_dist="${INIT_MIN_PREDATOR_DIST:-0.45}"
+init_min_prey_dist="${INIT_MIN_PREY_DIST:-0.45}"
+init_min_prey_predator_dist="${INIT_MIN_PREY_PREDATOR_DIST:-1.0}"
 obs_radius="${OBS_RADIUS:-1.8}"
 comm_radius="${COMM_RADIUS:-2.2}"
 ensure_connected_comm_graph="${ENSURE_CONNECTED_COMM_GRAPH:-True}"
@@ -42,6 +46,12 @@ echo "env=${env}, scenario=${scenario}, algo=${algo}, exp=${exp}, seed=${seed}"
 echo "num_predators=${num_predators}, num_prey=${num_prey}, comm_radius=${comm_radius}, obs_radius=${obs_radius}"
 echo "render_mode=${render_mode}, render_fps=${render_fps}"
 echo "rollout episode_length=${episode_length}, env_episode_length=${env_episode_length}"
+
+random_start_args=""
+if [ "${random_start_positions}" = "True" ] || [ "${random_start_positions}" = "true" ] || [ "${random_start_positions}" = "1" ]; then
+  random_start_args="--random_start_positions"
+  echo "fully random start positions enabled"
+fi
 
 graph_args=""
 if [ "${ensure_connected_comm_graph}" = "False" ] || [ "${ensure_connected_comm_graph}" = "false" ] || [ "${ensure_connected_comm_graph}" = "0" ]; then
@@ -78,6 +88,10 @@ python eval/eval_long_range_predator_prey.py \
  --predator_max_speed "${predator_max_speed}" \
  --num_prey "${num_prey}" \
  --world_size "${world_size}" \
+ ${random_start_args} \
+ --init_min_predator_dist "${init_min_predator_dist}" \
+ --init_min_prey_dist "${init_min_prey_dist}" \
+ --init_min_prey_predator_dist "${init_min_prey_predator_dist}" \
  --obs_radius "${obs_radius}" \
  --comm_radius "${comm_radius}" \
  ${graph_args} \

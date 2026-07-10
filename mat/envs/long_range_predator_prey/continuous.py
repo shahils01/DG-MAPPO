@@ -28,6 +28,10 @@ class LongRangePredatorPreyConfig:
     world_size: float = 6.0
     dt: float = 0.1
     episode_length: int = 200
+    random_start_positions: bool = False
+    init_min_predator_dist: float = 0.45
+    init_min_prey_dist: float = 0.45
+    init_min_prey_predator_dist: float = 1.0
     obs_radius: float = 1.8
     comm_radius: float = 2.2
     ensure_connected_comm_graph: bool = True
@@ -99,16 +103,19 @@ class LongRangePredatorPreyTorchCore:
         env_ids = env_ids.to(device=self.device, dtype=torch.long)
         n = env_ids.numel()
 
-        pred_angles = torch.linspace(0.0, 2.0 * torch.pi, self.n_predators + 1, device=self.device)[:-1]
-        pred_angles = pred_angles.unsqueeze(0).repeat(n, 1)
-        pred_angles = pred_angles + self._rand(n, self.n_predators) * 0.35
-        pred_radius = self.half_world * 0.65
-        pred_xy = torch.stack([torch.cos(pred_angles), torch.sin(pred_angles)], dim=-1) * pred_radius
-        pred_xy = pred_xy + (self._rand(n, self.n_predators, 2) - 0.5) * 0.55
-        pred_theta = _wrap_angle(pred_angles + torch.pi + (self._rand(n, self.n_predators) - 0.5) * 0.5)
+        if self.cfg.random_start_positions:
+            pred_xy, pred_theta, prey_xy, prey_theta = self._random_start_poses(n)
+        else:
+            pred_angles = torch.linspace(0.0, 2.0 * torch.pi, self.n_predators + 1, device=self.device)[:-1]
+            pred_angles = pred_angles.unsqueeze(0).repeat(n, 1)
+            pred_angles = pred_angles + self._rand(n, self.n_predators) * 0.35
+            pred_radius = self.half_world * 0.65
+            pred_xy = torch.stack([torch.cos(pred_angles), torch.sin(pred_angles)], dim=-1) * pred_radius
+            pred_xy = pred_xy + (self._rand(n, self.n_predators, 2) - 0.5) * 0.55
+            pred_theta = _wrap_angle(pred_angles + torch.pi + (self._rand(n, self.n_predators) - 0.5) * 0.5)
 
-        prey_xy = (self._rand(n, self.n_prey, 2) - 0.5) * (self.cfg.world_size * 0.45)
-        prey_theta = (self._rand(n, self.n_prey) - 0.5) * 2.0 * torch.pi
+            prey_xy = (self._rand(n, self.n_prey, 2) - 0.5) * (self.cfg.world_size * 0.45)
+            prey_theta = (self._rand(n, self.n_prey) - 0.5) * 2.0 * torch.pi
 
         self.predator_pose[env_ids, :, :2] = self._clamp_xy(pred_xy)
         self.predator_pose[env_ids, :, 2] = pred_theta
@@ -296,6 +303,59 @@ class LongRangePredatorPreyTorchCore:
 
     def _rand(self, *shape: int) -> torch.Tensor:
         return torch.rand(*shape, generator=self.generator, device=self.device)
+
+    def _sample_uniform_xy(self, n_envs: int, count: int) -> torch.Tensor:
+        span = max(2.0 * (self.half_world - 0.05), 1e-3)
+        return (self._rand(n_envs, count, 2) - 0.5) * span
+
+    def _random_start_poses(self, n_envs: int):
+        pred_xy = self._sample_uniform_xy(n_envs, self.n_predators)
+        pred_min = max(float(self.cfg.init_min_predator_dist), float(self.cfg.collision_radius), 0.0)
+        for agent_i in range(1, self.n_predators):
+            for _ in range(200):
+                dist = torch.norm(
+                    pred_xy[:, agent_i: agent_i + 1, :] - pred_xy[:, :agent_i, :],
+                    dim=-1,
+                )
+                invalid = dist.lt(pred_min).any(dim=1)
+                if not bool(invalid.any().item()):
+                    break
+                pred_xy[invalid, agent_i, :] = self._sample_uniform_xy(
+                    int(invalid.sum().item()),
+                    1,
+                )[:, 0, :]
+
+        prey_xy = self._sample_uniform_xy(n_envs, self.n_prey)
+        prey_min = max(float(self.cfg.init_min_prey_dist), float(self.cfg.collision_radius), 0.0)
+        prey_pred_min = max(
+            float(self.cfg.init_min_prey_predator_dist),
+            float(self.cfg.capture_radius) * 2.0,
+            float(self.cfg.collision_radius),
+            0.0,
+        )
+        for prey_i in range(self.n_prey):
+            for _ in range(300):
+                pred_dist = torch.norm(
+                    prey_xy[:, prey_i: prey_i + 1, :] - pred_xy,
+                    dim=-1,
+                )
+                invalid = pred_dist.lt(prey_pred_min).any(dim=1)
+                if prey_i > 0:
+                    prey_dist = torch.norm(
+                        prey_xy[:, prey_i: prey_i + 1, :] - prey_xy[:, :prey_i, :],
+                        dim=-1,
+                    )
+                    invalid = invalid | prey_dist.lt(prey_min).any(dim=1)
+                if not bool(invalid.any().item()):
+                    break
+                prey_xy[invalid, prey_i, :] = self._sample_uniform_xy(
+                    int(invalid.sum().item()),
+                    1,
+                )[:, 0, :]
+
+        pred_theta = (self._rand(n_envs, self.n_predators) - 0.5) * 2.0 * torch.pi
+        prey_theta = (self._rand(n_envs, self.n_prey) - 0.5) * 2.0 * torch.pi
+        return pred_xy, pred_theta, prey_xy, prey_theta
 
     def _clamp_xy(self, xy: torch.Tensor) -> torch.Tensor:
         return xy.clamp(-self.half_world + 0.05, self.half_world - 0.05)

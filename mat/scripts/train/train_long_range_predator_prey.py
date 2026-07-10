@@ -33,6 +33,10 @@ def make_env_kwargs(all_args, seed):
         "world_size": all_args.world_size,
         "dt": all_args.env_dt,
         "episode_length": getattr(all_args, "env_episode_length", all_args.episode_length),
+        "random_start_positions": all_args.random_start_positions,
+        "init_min_predator_dist": all_args.init_min_predator_dist,
+        "init_min_prey_dist": all_args.init_min_prey_dist,
+        "init_min_prey_predator_dist": all_args.init_min_prey_predator_dist,
         "obs_radius": all_args.obs_radius,
         "comm_radius": all_args.comm_radius,
         "ensure_connected_comm_graph": all_args.ensure_connected_comm_graph,
@@ -168,6 +172,10 @@ def parse_args(args, parser):
     parser.add_argument("--num_prey", type=int, default=2)
     parser.add_argument("--world_size", type=float, default=6.0)
     parser.add_argument("--env_dt", type=float, default=0.1)
+    parser.add_argument("--random_start_positions", action="store_true", default=False)
+    parser.add_argument("--init_min_predator_dist", type=float, default=0.45)
+    parser.add_argument("--init_min_prey_dist", type=float, default=0.45)
+    parser.add_argument("--init_min_prey_predator_dist", type=float, default=1.0)
     parser.add_argument(
         "--env_episode_length",
         type=int,

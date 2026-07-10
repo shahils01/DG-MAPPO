@@ -32,6 +32,10 @@ def parse_args():
     parser.add_argument("--episode_length", type=int, default=200)
     parser.add_argument("--env_episode_length", type=int, default=None)
     parser.add_argument("--world_size", type=float, default=6.0)
+    parser.add_argument("--random_start_positions", action="store_true")
+    parser.add_argument("--init_min_predator_dist", type=float, default=0.45)
+    parser.add_argument("--init_min_prey_dist", type=float, default=0.45)
+    parser.add_argument("--init_min_prey_predator_dist", type=float, default=1.0)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--disable_connected_comm_graph", action="store_true")
     parser.add_argument("--disable_prey_visibility_guarantee", action="store_true")
@@ -105,6 +109,10 @@ def main():
         num_prey=args.num_prey,
         episode_length=env_episode_length,
         world_size=args.world_size,
+        random_start_positions=args.random_start_positions,
+        init_min_predator_dist=args.init_min_predator_dist,
+        init_min_prey_dist=args.init_min_prey_dist,
+        init_min_prey_predator_dist=args.init_min_prey_predator_dist,
         ensure_connected_comm_graph=not args.disable_connected_comm_graph,
         ensure_prey_visible=not args.disable_prey_visibility_guarantee,
         device=args.device,
