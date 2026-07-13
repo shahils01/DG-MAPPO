@@ -1082,13 +1082,21 @@ class StarCraft2Env(MultiAgentEnv):
             if self.obs_terrain_height:
                 move_feats[ind:] = self.get_surrounding_height(unit)
 
+            communication_matrix = self.get_agent_communication_matrix()
+            communicating_agent_ids = np.where(communication_matrix[agent_id])[0]
+            observing_agent_ids = [agent_id] + communicating_agent_ids.tolist()
+
             # Enemy features
             for e_id, e_unit in self.enemies.items():
                 e_x = e_unit.pos.x
                 e_y = e_unit.pos.y
                 dist = self.distance(x, y, e_x, e_y)
+                observed_by_comm_neighbor = any(
+                    self.is_enemy_visible_to_agent(observer_id, e_id)
+                    for observer_id in observing_agent_ids
+                )
 
-                if (dist < sight_range and e_unit.health > 0):  # visible and alive
+                if observed_by_comm_neighbor:  # visible locally or shared by a communicating ally
                     # Sight range > shoot range
                     enemy_feats[e_id, 0] = avail_actions[self.n_actions_no_attack + e_id]  # available
                     enemy_feats[e_id, 1] = dist / sight_range  # distance
@@ -1110,7 +1118,6 @@ class StarCraft2Env(MultiAgentEnv):
 
             # Ally features
             al_ids = [al_id for al_id in range(self.n_agents) if al_id != agent_id]
-            check_comm = 0   # to check if agent is communicating with atleast 1 neighbor
 
             for i, al_id in enumerate(al_ids):
                 al_unit = self.get_unit_by_id(al_id)
@@ -1118,14 +1125,13 @@ class StarCraft2Env(MultiAgentEnv):
                 al_y = al_unit.pos.y
                 dist = self.distance(x, y, al_x, al_y)
 
-                if (dist < sight_range and al_unit.health > 0):  # visible and alive
+                if communication_matrix[agent_id, al_id] and al_unit.health > 0:
                     ally_feats[i, 0] = 1  # visible
                     ally_feats[i, 1] = dist / sight_range  # distance
                     ally_feats[i, 2] = (al_x - x) / sight_range  # relative X
                     ally_feats[i, 3] = (al_y - y) / sight_range  # relative Y
 
                     ally_id_feats[al_id] = 1
-                    check_comm = 1
 
                     ind = 4
                     if self.obs_all_health:
@@ -1804,58 +1810,120 @@ class StarCraft2Env(MultiAgentEnv):
 
         return [size * self.stacked_frames if self.use_stacked_frames else size, [self.n_agents, nf_al], [self.n_enemies, nf_en], [1, move_state + obs_agent_size + timestep_state + agent_id_feats]]
     
-    def get_visibility_matrix(self):
-        """Returns a boolean numpy array of dimensions 
-        (n_agents, n_agents + n_enemies) indicating which units
-        are visible to each agent.
-        """
-        arr = np.zeros((self.n_agents, self.n_agents + self.n_enemies), dtype=np.bool_)
+    def get_alive_agent_ids(self):
+        """Returns ids for allied agents that are still alive."""
+        return [
+            agent_id for agent_id in range(self.n_agents)
+            if self.get_unit_by_id(agent_id).health > 0
+        ]
 
-        for agent_id in range(self.n_agents):
-            current_agent = self.get_unit_by_id(agent_id)
-            check_comm = 0
-            if current_agent.health > 0:  # it agent not dead
-                x = current_agent.pos.x
-                y = current_agent.pos.y
-                sight_range = self.unit_sight_range(agent_id)
+    def is_enemy_visible_to_agent(self, agent_id, enemy_id):
+        """Returns whether an enemy is directly visible to an alive agent."""
+        agent = self.get_unit_by_id(agent_id)
+        enemy = self.enemies[enemy_id]
+        if agent.health <= 0 or enemy.health <= 0:
+            return False
 
-                # Enemies
-                for e_id, e_unit in self.enemies.items():
-                    e_x = e_unit.pos.x
-                    e_y = e_unit.pos.y
-                    dist = self.distance(x, y, e_x, e_y)
+        dist = self.distance(agent.pos.x, agent.pos.y, enemy.pos.x, enemy.pos.y)
+        return dist < self.unit_sight_range(agent_id)
 
-                    if (dist < sight_range and e_unit.health > 0):
-                        # visible and alive
-                        arr[agent_id, self.n_agents + e_id] = 1
+    def get_agent_communication_matrix(self):
+        """Returns a connected undirected communication graph over alive agents."""
+        arr = np.zeros((self.n_agents, self.n_agents), dtype=np.bool_)
+        alive_agent_ids = self.get_alive_agent_ids()
 
-                # The matrix for allies is filled symmetrically
-                al_ids = [
-                    al_id for al_id in range(self.n_agents)
-                    if al_id > agent_id
+        for i, agent_id in enumerate(alive_agent_ids):
+            agent = self.get_unit_by_id(agent_id)
+            for al_id in alive_agent_ids[i + 1:]:
+                ally = self.get_unit_by_id(al_id)
+                dist = self.distance(agent.pos.x, agent.pos.y, ally.pos.x, ally.pos.y)
+                communication_range = min(
+                    self.unit_sight_range(agent_id),
+                    self.unit_sight_range(al_id),
+                )
+                if dist < communication_range:
+                    arr[agent_id, al_id] = arr[al_id, agent_id] = 1
+
+        self.ensure_alive_agents_connected(arr, alive_agent_ids)
+        return arr
+
+    def ensure_alive_agents_connected(self, arr, alive_agent_ids):
+        """Adds minimum repair edges so every alive agent has a path to every other."""
+        components = self.get_connected_components(arr, alive_agent_ids)
+        if len(components) <= 1:
+            return
+
+        connected_component = components.pop(0)
+        while components:
+            best_component_idx = None
+            best_edge = None
+            best_dist = None
+
+            for component_idx, component in enumerate(components):
+                for src_id in connected_component:
+                    src_unit = self.get_unit_by_id(src_id)
+                    for dst_id in component:
+                        dst_unit = self.get_unit_by_id(dst_id)
+                        dist = self.distance(
+                            src_unit.pos.x, src_unit.pos.y,
+                            dst_unit.pos.x, dst_unit.pos.y,
+                        )
+                        edge = (src_id, dst_id)
+                        if (
+                            best_dist is None
+                            or dist < best_dist
+                            or (dist == best_dist and edge < best_edge)
+                        ):
+                            best_dist = dist
+                            best_edge = edge
+                            best_component_idx = component_idx
+
+            src_id, dst_id = best_edge
+            arr[src_id, dst_id] = arr[dst_id, src_id] = 1
+            connected_component.extend(components.pop(best_component_idx))
+
+    def get_connected_components(self, arr, alive_agent_ids):
+        """Returns connected components restricted to alive agents."""
+        alive_agent_ids = list(alive_agent_ids)
+        unseen = set(alive_agent_ids)
+        components = []
+
+        while unseen:
+            start_id = min(unseen)
+            stack = [start_id]
+            unseen.remove(start_id)
+            component = []
+
+            while stack:
+                agent_id = stack.pop()
+                component.append(agent_id)
+                neighbors = [
+                    neighbor_id for neighbor_id in alive_agent_ids
+                    if arr[agent_id, neighbor_id] and neighbor_id in unseen
                 ]
-                for i, al_id in enumerate(al_ids):
-                    al_unit = self.get_unit_by_id(al_id)
-                    al_x = al_unit.pos.x
-                    al_y = al_unit.pos.y
-                    dist = self.distance(x, y, al_x, al_y)
+                for neighbor_id in neighbors:
+                    unseen.remove(neighbor_id)
+                    stack.append(neighbor_id)
 
-                    if (dist < sight_range and al_unit.health > 0):
-                        # visible and alive
-                        arr[agent_id, al_id] = arr[al_id, agent_id] = 1
-                        check_comm += 1
+            components.append(component)
 
-                    # if check_comm == 2:
-                    #     break
-                
-                if check_comm == 0:
-                    if agent_id == 0:
-                        arr[agent_id, agent_id+1] = arr[agent_id+1, agent_id] = 1
-                    elif agent_id == self.n_agents-1:
-                        arr[agent_id, agent_id-1] = arr[agent_id-1, agent_id] = 1
-                    else:
-                        arr[agent_id, agent_id-1] = arr[agent_id-1, agent_id] = 1
-                        arr[agent_id, agent_id+1] = arr[agent_id+1, agent_id] = 1
+        return components
+
+    def get_visibility_matrix(self):
+        """Returns visibility plus the connected communication graph."""
+        arr = np.zeros((self.n_agents, self.n_agents + self.n_enemies), dtype=np.bool_)
+        communication_matrix = self.get_agent_communication_matrix()
+        arr[:, :self.n_agents] = communication_matrix
+
+        for agent_id in self.get_alive_agent_ids():
+            communicating_agent_ids = np.where(communication_matrix[agent_id])[0]
+            observing_agent_ids = [agent_id] + communicating_agent_ids.tolist()
+            for e_id in self.enemies.keys():
+                if any(
+                    self.is_enemy_visible_to_agent(observer_id, e_id)
+                    for observer_id in observing_agent_ids
+                ):
+                    arr[agent_id, self.n_agents + e_id] = 1
 
         return arr
 
