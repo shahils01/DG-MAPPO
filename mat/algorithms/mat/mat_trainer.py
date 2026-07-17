@@ -259,8 +259,14 @@ class MATTrainer:
         # Convert all inputs to proper device and dtype
         def ensure_tensor(x):
             if isinstance(x, np.ndarray):
-                return torch.from_numpy(x).to(**self.tpdv)
-            return x.to(**self.tpdv) if isinstance(x, torch.Tensor) else x
+                x = torch.from_numpy(x)
+            if isinstance(x, torch.Tensor):
+                return x.to(
+                    device=self.device,
+                    dtype=torch.float32,
+                    non_blocking=True,
+                )
+            return x
 
         old_action_log_probs_batch = ensure_tensor(old_action_log_probs_batch)
         adv_targ = ensure_tensor(adv_targ)
@@ -268,13 +274,18 @@ class MATTrainer:
         return_batch = ensure_tensor(return_batch)
         active_masks_batch = ensure_tensor(active_masks_batch)
         obs_batch = ensure_tensor(obs_batch)
-        edge_index_batch = ensure_tensor(edge_index_batch)
-        next_obs_batch = ensure_tensor(next_obs_batch)
-        share_obs_batch = ensure_tensor(share_obs_batch)
-        rnn_states_batch = ensure_tensor(rnn_states_batch)
-        rnn_states_critic_batch = ensure_tensor(rnn_states_critic_batch)
         actions_batch = ensure_tensor(actions_batch)
-        masks_batch = ensure_tensor(masks_batch)
+
+        # DG-MAT ignores centralized observations, RNN state, next_obs, and
+        # edge_index. Keep those compatibility placeholders on CPU so a
+        # CPU-backed buffer does not copy unused minibatch data to the GPU.
+        if self.policy.algorithm_name != "dg_mat":
+            edge_index_batch = ensure_tensor(edge_index_batch)
+            next_obs_batch = ensure_tensor(next_obs_batch)
+            share_obs_batch = ensure_tensor(share_obs_batch)
+            rnn_states_batch = ensure_tensor(rnn_states_batch)
+            rnn_states_critic_batch = ensure_tensor(rnn_states_critic_batch)
+            masks_batch = ensure_tensor(masks_batch)
 
         if adjcency_matrix_batch is not None:
             adjcency_matrix_batch = ensure_tensor(adjcency_matrix_batch)
@@ -498,11 +509,13 @@ class MATTrainer:
         train_info['ratio'] = 0
         train_info['gnn_consensus_loss'] = 0
         train_info['critic_consensus_error'] = 0
+        num_updates = 0
 
         for i in range(self.ppo_epoch):
             data_generator = buffer.feed_forward_generator_transformer(advantages, self.num_mini_batch, mini_batch_size=self.mini_batch_size)
 
             for sample in data_generator:
+                num_updates += 1
 
                 value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, imp_weights, avg_gnn_consensus_loss, critic_consensus_error \
                     = self.ppo_update(sample, episode, i, obs_dim)
@@ -516,7 +529,11 @@ class MATTrainer:
                 train_info['gnn_consensus_loss'] += avg_gnn_consensus_loss
                 train_info['critic_consensus_error'] += critic_consensus_error
 
-        num_updates = self.ppo_epoch * self.num_mini_batch
+        if num_updates == 0:
+            raise ValueError(
+                "PPO produced zero minibatches. Reduce --mini_batch_size or "
+                "increase episode_length * n_rollout_threads."
+            )
 
         for k in train_info.keys():
             train_info[k] /= num_updates

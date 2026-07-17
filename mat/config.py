@@ -170,6 +170,19 @@ def get_config():
                         default=1, help="Number of torch threads for training")
     parser.add_argument("--n_rollout_threads", type=int, default=32,
                         help="Number of parallel envs for training rollouts")
+    parser.add_argument(
+        "--buffer_device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "cuda"],
+        help="rollout-buffer storage device; auto uses CPU for DG-MAT and CUDA for legacy algorithms",
+    )
+    parser.add_argument(
+        "--disable_buffer_pin_memory",
+        action="store_true",
+        default=False,
+        help="disable page-locked CPU storage for CPU-backed rollout buffers",
+    )
     parser.add_argument("--n_eval_rollout_threads", type=int, default=1,
                         help="Number of parallel envs for evaluating rollouts")
     parser.add_argument("--n_render_rollout_threads", type=int, default=1,

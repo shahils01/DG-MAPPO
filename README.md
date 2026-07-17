@@ -77,9 +77,9 @@ python mat/scripts/train/train_smac.py \
   --eval_map_name 10m_vs_11m \
   --unit_sight_range 9 \
   --n_rollout_threads 32 \
+  --buffer_device cpu \
   --episode_length 100 \
-  --num_mini_batch 1 \
-  --mini_batch_size 3200 \
+  --mini_batch_size 128 \
   --ppo_epoch 10 \
   --clip_param 0.05 \
   --lr 5e-4 \
@@ -94,6 +94,11 @@ python mat/scripts/train/train_smac.py \
 
 Do not pass `--encode_state` to DG-MAT. DG-MAT intentionally learns its actor
 and critic representations from graph-local observations.
+
+DG-MAT uses CPU rollout-buffer storage by default when `--buffer_device auto`
+(the default). PPO moves only the sampled minibatch tensors needed by DG-MAT
+to CUDA. Pass `--buffer_device cpu` explicitly in cluster scripts to make this
+choice visible in logged configurations.
 
 
 ## Multi-Agent Sequential Decision Paradigm

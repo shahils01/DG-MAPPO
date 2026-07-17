@@ -34,7 +34,28 @@ class SharedReplayBuffer(object):
         self.n_rollout_threads = args.n_rollout_threads
         self.n_embd = args.n_embd
         self.recurrent_N = args.recurrent_N
-        self.gamma = torch.tensor(args.gamma, dtype=torch.float32, device='cuda:0')
+        requested_buffer_device = getattr(args, "buffer_device", "auto")
+        if requested_buffer_device == "auto":
+            requested_buffer_device = (
+                "cpu" if args.algorithm_name == "dg_mat" else "cuda"
+            )
+        if requested_buffer_device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA rollout-buffer storage was requested, but CUDA is unavailable. "
+                "Use --buffer_device cpu."
+            )
+
+        self.storage_device = torch.device(
+            "cuda:0" if requested_buffer_device == "cuda" else "cpu"
+        )
+        self.pin_memory = (
+            self.storage_device.type == "cpu"
+            and torch.cuda.is_available()
+            and not getattr(args, "disable_buffer_pin_memory", False)
+        )
+        self.gamma = torch.tensor(
+            args.gamma, dtype=torch.float32, device=self.storage_device
+        )
         self.gae_lambda = args.gae_lambda
         self._use_gae = args.use_gae
         self._use_popart = args.use_popart
@@ -54,45 +75,89 @@ class SharedReplayBuffer(object):
         if type(share_obs_shape[-1]) == list:
             share_obs_shape = share_obs_shape[:1]
 
-        self.share_obs = torch.zeros((self.episode_length + 1, self.n_rollout_threads, num_agents, *share_obs_shape),
-                                  dtype=torch.float32, device='cuda:0')
-        self.obs = torch.zeros((self.episode_length + 1, self.n_rollout_threads, num_agents, *obs_shape), dtype=torch.float32, device='cuda:0')
-        self.edge_index = torch.zeros((self.episode_length + 1, self.n_rollout_threads, 2, num_agents*num_agents), dtype=torch.float32, device='cuda:0')
-        self.adjcency_matrix = torch.zeros((self.episode_length + 1, self.n_rollout_threads, num_agents, num_agents), dtype=torch.float32, device='cuda:0')
+        self.share_obs = self._zeros(
+            self.episode_length + 1,
+            self.n_rollout_threads,
+            num_agents,
+            *share_obs_shape,
+        )
+        self.obs = self._zeros(
+            self.episode_length + 1,
+            self.n_rollout_threads,
+            num_agents,
+            *obs_shape,
+        )
+        self.edge_index = self._zeros(
+            self.episode_length + 1,
+            self.n_rollout_threads,
+            2,
+            num_agents * num_agents,
+        )
+        self.adjcency_matrix = self._zeros(
+            self.episode_length + 1,
+            self.n_rollout_threads,
+            num_agents,
+            num_agents,
+        )
 
-        self.rnn_states = torch.zeros(
-            (self.episode_length + 1, self.n_rollout_threads, num_agents, self.recurrent_N, self.n_embd),
-            dtype=torch.float32, device='cuda:0')
-        self.rnn_states_critic = torch.zeros_like(self.rnn_states)
+        self.rnn_states = self._zeros(
+            self.episode_length + 1,
+            self.n_rollout_threads,
+            num_agents,
+            self.recurrent_N,
+            self.n_embd,
+        )
+        self.rnn_states_critic = self._zeros(*self.rnn_states.shape)
 
-        self.value_preds = torch.zeros(
-            (self.episode_length + 1, self.n_rollout_threads, num_agents, self.num_quants), dtype=torch.float32, device='cuda:0')
-        self.returns = torch.zeros_like(self.value_preds)
-        self.advantages = torch.zeros(
-            (self.episode_length, self.n_rollout_threads, num_agents, 1), dtype=torch.float32, device='cuda:0')
+        self.value_preds = self._zeros(
+            self.episode_length + 1,
+            self.n_rollout_threads,
+            num_agents,
+            self.num_quants,
+        )
+        self.returns = self._zeros(*self.value_preds.shape)
+        self.advantages = self._zeros(
+            self.episode_length, self.n_rollout_threads, num_agents, 1
+        )
 
         if act_space.__class__.__name__ == 'Discrete':
-            self.available_actions = torch.ones((self.episode_length + 1, self.n_rollout_threads, num_agents, act_space.n),
-                                             dtype=torch.float32, device='cuda:0')
+            self.available_actions = self._ones(
+                self.episode_length + 1,
+                self.n_rollout_threads,
+                num_agents,
+                act_space.n,
+            )
         else:
             self.available_actions = None
 
         act_shape = get_shape_from_act_space(act_space)
 
-        self.actions = torch.zeros(
-            (self.episode_length, self.n_rollout_threads, num_agents, act_shape), dtype=torch.float32, device='cuda:0')
-        self.action_log_probs = torch.zeros(
-            (self.episode_length+1, self.n_rollout_threads, num_agents, act_shape), dtype=torch.float32, device='cuda:0')
+        self.actions = self._zeros(
+            self.episode_length, self.n_rollout_threads, num_agents, act_shape
+        )
+        self.action_log_probs = self._zeros(
+            self.episode_length + 1,
+            self.n_rollout_threads,
+            num_agents,
+            act_shape,
+        )
 
-        self.action_hats = torch.zeros(
-            (self.episode_length + 1, self.n_rollout_threads, num_agents, args.n_embd), dtype=torch.float32, device='cuda:0')
+        self.action_hats = self._zeros(
+            self.episode_length + 1,
+            self.n_rollout_threads,
+            num_agents,
+            args.n_embd,
+        )
 
-        self.rewards = torch.zeros(
-            (self.episode_length, self.n_rollout_threads, num_agents, 1), dtype=torch.float32, device='cuda:0')
+        self.rewards = self._zeros(
+            self.episode_length, self.n_rollout_threads, num_agents, 1
+        )
 
-        self.masks = torch.ones((self.episode_length + 1, self.n_rollout_threads, num_agents, 1), dtype=torch.float32, device='cuda:0')
-        self.bad_masks = torch.ones_like(self.masks)
-        self.active_masks = torch.ones_like(self.masks)
+        self.masks = self._ones(
+            self.episode_length + 1, self.n_rollout_threads, num_agents, 1
+        )
+        self.bad_masks = self._ones(*self.masks.shape)
+        self.active_masks = self._ones(*self.masks.shape)
 
         '''self.flat_params = torch.zeros((self.episode_length + 1, self.n_rollout_threads, num_agents, 68100), dtype=torch.float32, device='cuda:0')
         self.reconst_params = torch.zeros((self.episode_length + 1, self.n_rollout_threads, num_agents, 68100), dtype=torch.float32, device='cuda:0')
@@ -104,6 +169,38 @@ class SharedReplayBuffer(object):
         
         if self.num_quants > 1:
             self.quantile_spacing = 1.0 / (self.num_quants - 1)
+
+    def _zeros(self, *shape):
+        return torch.zeros(
+            shape,
+            dtype=torch.float32,
+            device=self.storage_device,
+            pin_memory=self.pin_memory,
+        )
+
+    def _ones(self, *shape):
+        return torch.ones(
+            shape,
+            dtype=torch.float32,
+            device=self.storage_device,
+            pin_memory=self.pin_memory,
+        )
+
+    def copy_into(self, destination, source):
+        """Copy rollout data into storage without creating a GPU-side clone."""
+        if isinstance(source, np.ndarray):
+            source = torch.from_numpy(source)
+        if not isinstance(source, torch.Tensor):
+            source = torch.as_tensor(source)
+        destination.copy_(
+            source.detach(),
+            non_blocking=self.pin_memory and source.device.type == "cuda",
+        )
+
+    def synchronize(self):
+        """Wait for pending asynchronous GPU-to-CPU rollout copies."""
+        if self.pin_memory and torch.cuda.is_available():
+            torch.cuda.current_stream().synchronize()
 
     def insert(self, share_obs, obs, rnn_states_actor, rnn_states_critic, actions, action_log_probs, value_preds, rewards, masks, bad_masks=None, active_masks=None,
                  available_actions=None, edge_index=None, adjcency_matrix=None):
@@ -122,25 +219,27 @@ class SharedReplayBuffer(object):
         :param active_masks: (np.ndarray) denotes whether an agent is active or dead in the env.
         :param available_actions: (np.ndarray) actions available to each agent. If None, all actions are available.
         """
-        self.share_obs[self.step + 1] = share_obs.clone()
-        self.obs[self.step + 1] = obs.clone()
-        self.rnn_states[self.step + 1] = rnn_states_actor.clone()
-        self.rnn_states_critic[self.step + 1] = rnn_states_critic.clone()
-        self.actions[self.step] = actions.clone()
-        self.action_log_probs[self.step] = action_log_probs.clone()
-        self.value_preds[self.step] = value_preds.clone()
-        self.rewards[self.step] = rewards.clone()
-        self.masks[self.step + 1] = masks.clone()
+        self.copy_into(self.share_obs[self.step + 1], share_obs)
+        self.copy_into(self.obs[self.step + 1], obs)
+        self.copy_into(self.rnn_states[self.step + 1], rnn_states_actor)
+        self.copy_into(self.rnn_states_critic[self.step + 1], rnn_states_critic)
+        self.copy_into(self.actions[self.step], actions)
+        self.copy_into(self.action_log_probs[self.step], action_log_probs)
+        self.copy_into(self.value_preds[self.step], value_preds)
+        self.copy_into(self.rewards[self.step], rewards)
+        self.copy_into(self.masks[self.step + 1], masks)
         if bad_masks is not None:
-            self.bad_masks[self.step + 1] = bad_masks.clone()
+            self.copy_into(self.bad_masks[self.step + 1], bad_masks)
         if active_masks is not None:
-            self.active_masks[self.step + 1] = active_masks.clone()
+            self.copy_into(self.active_masks[self.step + 1], active_masks)
         if available_actions is not None:
-            self.available_actions[self.step + 1] = available_actions.clone()
+            self.copy_into(
+                self.available_actions[self.step + 1], available_actions
+            )
         if edge_index is not None:
-            self.edge_index[self.step] = edge_index.clone()
+            self.copy_into(self.edge_index[self.step], edge_index)
         if adjcency_matrix is not None:
-            self.adjcency_matrix[self.step] = adjcency_matrix.clone()
+            self.copy_into(self.adjcency_matrix[self.step], adjcency_matrix)
 
         self.step = (self.step + 1) % self.episode_length
 
@@ -185,15 +284,15 @@ class SharedReplayBuffer(object):
 
     def after_update(self):
         """Copy last timestep data to first index. Called after update to model."""
-        self.share_obs[0] = self.share_obs[-1].clone()
-        self.obs[0] = self.obs[-1].clone()
-        self.rnn_states[0] = self.rnn_states[-1].clone()
-        self.rnn_states_critic[0] = self.rnn_states_critic[-1].clone()
-        self.masks[0] = self.masks[-1].clone()
-        self.bad_masks[0] = self.bad_masks[-1].clone()
-        self.active_masks[0] = self.active_masks[-1].clone()
+        self.share_obs[0].copy_(self.share_obs[-1])
+        self.obs[0].copy_(self.obs[-1])
+        self.rnn_states[0].copy_(self.rnn_states[-1])
+        self.rnn_states_critic[0].copy_(self.rnn_states_critic[-1])
+        self.masks[0].copy_(self.masks[-1])
+        self.bad_masks[0].copy_(self.bad_masks[-1])
+        self.active_masks[0].copy_(self.active_masks[-1])
         if self.available_actions is not None:
-            self.available_actions[0] = self.available_actions[-1].clone()
+            self.available_actions[0].copy_(self.available_actions[-1])
 
     def chooseafter_update(self):
         """Copy last timestep data to first index. This method is used for Hanabi."""
@@ -238,7 +337,22 @@ class SharedReplayBuffer(object):
         :param next_value: (np.ndarray) value predictions for the step after the last episode step.
         :param value_normalizer: (PopArt) If not None, PopArt value normalizer instance.
         """
-        self.value_preds[-1] = next_value
+        self.copy_into(self.value_preds[-1], next_value)
+        self.synchronize()
+
+        denormalize = None
+        if value_normalizer is not None:
+            running_mean, running_var = value_normalizer.running_mean_var()
+            running_mean = running_mean.detach().to(self.storage_device)
+            running_var = running_var.detach().to(self.storage_device)
+            prefix = (None,) * value_normalizer.norm_axes
+
+            def denormalize(value):
+                return (
+                    value * torch.sqrt(running_var)[prefix]
+                    + running_mean[prefix]
+                )
+
         gae = 0
 
         # - 0.95**(step+1) * torch.exp(self.action_log_probs[step])*self.rewards[step]
@@ -246,12 +360,12 @@ class SharedReplayBuffer(object):
         for step in reversed(range(self.rewards.shape[0])):
             if self._use_popart or self._use_valuenorm:
                 if self.num_quants == 1:
-                    delta = self.rewards[step] + self.gamma * value_normalizer.denormalize(
+                    delta = self.rewards[step] + self.gamma * denormalize(
                     self.value_preds[step + 1]) * self.masks[step + 1] \
-                        - value_normalizer.denormalize(self.value_preds[step])
+                        - denormalize(self.value_preds[step])
                 else:
-                    delta = self.rewards[step] + self.wasserstein_like_distance(self.gamma * value_normalizer.denormalize(
-                        self.value_preds[step + 1]) * self.masks[step + 1], value_normalizer.denormalize(self.value_preds[step]))
+                    delta = self.rewards[step] + self.wasserstein_like_distance(self.gamma * denormalize(
+                        self.value_preds[step + 1]) * self.masks[step + 1], denormalize(self.value_preds[step]))
                                     
                 gae = delta + self.gamma * self.gae_lambda * self.masks[step + 1] * gae #+ 0.1 * self.gae_lambda * np.clip(entropy_deltas, -delta, delta)
 
@@ -260,7 +374,7 @@ class SharedReplayBuffer(object):
                     gae = 0
 
                 self.advantages[step] = gae
-                self.returns[step] = gae + value_normalizer.denormalize(self.value_preds[step])
+                self.returns[step] = gae + denormalize(self.value_preds[step])
             else:
                 if self.num_quants == 1:
                     delta = self.rewards[step] + self.gamma * self.value_preds[step + 1] * \

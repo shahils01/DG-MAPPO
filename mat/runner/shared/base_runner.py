@@ -108,6 +108,11 @@ class Runner(object):
                                         share_observation_space,
                                         self.envs.action_space[0],
                                          self.all_args.env_name)
+        print(
+            "[rollout buffer] "
+            f"storage={self.buffer.storage_device}, "
+            f"pinned_memory={self.buffer.pin_memory}"
+        )
 
     def run(self):
         """Collect training data, perform training updates, and evaluate policy."""

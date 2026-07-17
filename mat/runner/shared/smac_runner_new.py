@@ -201,7 +201,9 @@ class SMACRunner(Runner):
         if self.algorithm_name == "consensus_ippo":
             adjcency_matrix = self.envs.get_visibility_matrix()[:,:,:self.num_agents]
             adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device="cuda:0")
-            self.buffer.adjcency_matrix[0] = adjcency_matrix.clone()
+            self.buffer.copy_into(
+                self.buffer.adjcency_matrix[0], adjcency_matrix
+            )
 
         if self.all_args.iterations > 0:
             if self.algorithm_name in GNN_ALGORITHMS:
@@ -220,15 +222,20 @@ class SMACRunner(Runner):
 
                 obs = torch.cat([obs,x],dim=-1).detach()
 
-                self.buffer.adjcency_matrix[0] = adjcency_matrix.clone()
+                self.buffer.copy_into(
+                    self.buffer.adjcency_matrix[0], adjcency_matrix
+                )
             
         # replay buffer
         if not self.use_centralized_V:
             share_obs = obs
 
-        self.buffer.share_obs[0] = share_obs.clone()
-        self.buffer.obs[0] = obs.clone()
-        self.buffer.available_actions[0] = available_actions.clone()
+        self.buffer.copy_into(self.buffer.share_obs[0], share_obs)
+        self.buffer.copy_into(self.buffer.obs[0], obs)
+        self.buffer.copy_into(
+            self.buffer.available_actions[0], available_actions
+        )
+        self.buffer.synchronize()
 
     @torch.no_grad()
     def collect(self, step, batched_edge_index=None, adjacency_matrix=None):

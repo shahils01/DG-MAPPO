@@ -5,6 +5,7 @@ import torch
 
 from mat.algorithms.mat.algorithm.dg_mat import DGMAT
 from mat.algorithms.mat.algorithm.transformer_policy import TransformerPolicy
+from mat.utils.shared_buffer import SharedReplayBuffer
 
 
 class Box:
@@ -190,6 +191,67 @@ class DGMATTest(unittest.TestCase):
         owned_parameters = set().union(*parameter_sets)
         model_parameters = {id(parameter) for parameter in policy.transformer.parameters()}
         self.assertEqual(owned_parameters, model_parameters)
+
+    def test_dg_mat_auto_buffer_storage_is_cpu(self):
+        args = SimpleNamespace(
+            episode_length=2,
+            n_rollout_threads=2,
+            n_embd=16,
+            recurrent_N=1,
+            gamma=0.99,
+            gae_lambda=0.95,
+            use_gae=True,
+            use_popart=False,
+            use_valuenorm=False,
+            use_proper_time_limits=False,
+            algorithm_name="dg_mat",
+            n_quants=1,
+            buffer_device="auto",
+            disable_buffer_pin_memory=False,
+        )
+        buffer = SharedReplayBuffer(
+            args=args,
+            num_agents=3,
+            obs_space=Box((7,)),
+            cent_obs_space=Box((9,)),
+            act_space=Discrete(5),
+            env_name="StarCraft2",
+        )
+
+        self.assertEqual(buffer.storage_device, torch.device("cpu"))
+        for value in vars(buffer).values():
+            if isinstance(value, torch.Tensor):
+                self.assertEqual(value.device, torch.device("cpu"))
+
+        for _ in range(2):
+            buffer.insert(
+                share_obs=torch.randn(2, 3, 9),
+                obs=torch.randn(2, 3, 7),
+                rnn_states_actor=torch.zeros(2, 3, 1, 16),
+                rnn_states_critic=torch.zeros(2, 3, 1, 16),
+                actions=torch.zeros(2, 3, 1),
+                action_log_probs=torch.zeros(2, 3, 1),
+                value_preds=torch.zeros(2, 3, 1),
+                rewards=torch.ones(2, 3, 1),
+                masks=torch.ones(2, 3, 1),
+                bad_masks=torch.ones(2, 3, 1),
+                active_masks=torch.ones(2, 3, 1),
+                available_actions=torch.ones(2, 3, 5),
+                edge_index=torch.zeros(2, 2, 9),
+                adjcency_matrix=torch.eye(3).unsqueeze(0).expand(2, -1, -1),
+            )
+
+        buffer.compute_returns(torch.zeros(2, 3, 1))
+        sample = next(
+            buffer.feed_forward_generator_transformer(
+                buffer.advantages,
+                mini_batch_size=1,
+            )
+        )
+        self.assertTrue(all(
+            value is None or not isinstance(value, torch.Tensor) or value.device.type == "cpu"
+            for value in sample
+        ))
 
 
 if __name__ == "__main__":
