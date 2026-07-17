@@ -344,9 +344,17 @@ class MATTrainer:
             if self.policy.algorithm_name == "dg_mat":
                 actor_context = self.policy.transformer.last_actor_context
                 critic_context = self.policy.transformer.last_critic_context
-                attention_context = 0.5 * (actor_context + critic_context)
-                gnn_consensus_loss = self.adj_gnn_consensus_loss(
-                    attention_context, adjcency_matrix_batch
+                # Actor and critic contexts live in independently learned
+                # latent spaces. Compute agreement within each space instead
+                # of adding the representations together first.
+                actor_consensus_loss = self.adj_gnn_consensus_loss(
+                    actor_context, adjcency_matrix_batch
+                )
+                critic_consensus_loss = self.adj_gnn_consensus_loss(
+                    critic_context, adjcency_matrix_batch
+                )
+                gnn_consensus_loss = 0.5 * (
+                    actor_consensus_loss + critic_consensus_loss
                 )
             else:
                 gnn_consensus_loss = self.adj_gnn_consensus_loss(obs_batch[:,:,self.policy.obs_dim:], adjcency_matrix_batch)
@@ -425,11 +433,19 @@ class MATTrainer:
             elif self.policy.algorithm_name == "dg_mat":
                 mixing_adjacency = adjcency_matrix_batch.float().mean(dim=0)
                 average_agent_encoders_by_adj(
-                    self.policy.transformer.actor_attention.agent_blocks,
+                    self.policy.transformer.actor_local_encoder.agent_encoders,
                     mixing_adjacency,
                 )
                 average_agent_encoders_by_adj(
-                    self.policy.transformer.critic_attention.agent_blocks,
+                    self.policy.transformer.critic_local_encoder.agent_encoders,
+                    mixing_adjacency,
+                )
+                average_agent_encoders_by_adj(
+                    self.policy.transformer.actor_communication.agent_blocks,
+                    mixing_adjacency,
+                )
+                average_agent_encoders_by_adj(
+                    self.policy.transformer.critic_communication.agent_blocks,
                     mixing_adjacency,
                 )
                 average_agent_encoders_by_adj(

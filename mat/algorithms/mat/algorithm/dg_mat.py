@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Categorical, Normal
 
 from mat.algorithms.utils.util import check, init
@@ -16,18 +17,170 @@ def init_(module, gain=0.01, activate=False):
     )
 
 
-class LocalGraphAttentionBlock(nn.Module):
-    """Encode one receiver agent from its graph-local observation neighborhood."""
+class LocalSelfAttentionLayer(nn.Module):
+    """One Transformer-style self-attention layer over local observation tokens."""
 
-    def __init__(self, obs_dim, n_embd, n_head, dropout=0.0, ff_mult=2):
+    def __init__(self, n_embd, n_head, dropout=0.0, ff_mult=2):
         super().__init__()
         if n_embd % n_head != 0:
             raise ValueError(
                 f"DG-MAT requires n_embd ({n_embd}) to be divisible by n_head ({n_head})."
             )
 
-        self.obs_norm = nn.LayerNorm(obs_dim)
-        self.obs_projection = init_(nn.Linear(obs_dim, n_embd), activate=True)
+        self.attention_input_norm = nn.LayerNorm(n_embd)
+        self.attention = nn.MultiheadAttention(
+            embed_dim=n_embd,
+            num_heads=n_head,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.feed_forward_input_norm = nn.LayerNorm(n_embd)
+        self.feed_forward = nn.Sequential(
+            init_(nn.Linear(n_embd, ff_mult * n_embd), activate=True),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            init_(nn.Linear(ff_mult * n_embd, n_embd)),
+        )
+
+    def forward(self, tokens):
+        normalized = self.attention_input_norm(tokens)
+        attended, _ = self.attention(
+            normalized,
+            normalized,
+            normalized,
+            need_weights=False,
+        )
+        tokens = tokens + attended
+        return tokens + self.feed_forward(
+            self.feed_forward_input_norm(tokens)
+        )
+
+
+class LocalObservationSelfAttentionEncoder(nn.Module):
+    """Encode one agent's local observation without accessing any peer data."""
+
+    def __init__(
+        self,
+        obs_dim,
+        n_embd,
+        n_head,
+        n_block=1,
+        obs_tokens=8,
+        dropout=0.0,
+        ff_mult=2,
+    ):
+        super().__init__()
+        if n_block < 1:
+            raise ValueError("DG-MAT requires at least one local self-attention block.")
+        if obs_tokens < 1:
+            raise ValueError("DG-MAT requires at least one local observation token.")
+
+        self.obs_dim = obs_dim
+        self.num_tokens = min(int(obs_tokens), obs_dim)
+        self.chunk_dim = (obs_dim + self.num_tokens - 1) // self.num_tokens
+        self.padded_obs_dim = self.num_tokens * self.chunk_dim
+
+        self.chunk_projection = init_(
+            nn.Linear(self.chunk_dim, n_embd), activate=True
+        )
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, n_embd))
+        self.position_embedding = nn.Parameter(
+            torch.zeros(1, self.num_tokens + 1, n_embd)
+        )
+        self.layers = nn.ModuleList(
+            [
+                LocalSelfAttentionLayer(
+                    n_embd=n_embd,
+                    n_head=n_head,
+                    dropout=dropout,
+                    ff_mult=ff_mult,
+                )
+                for _ in range(n_block)
+            ]
+        )
+        self.output_norm = nn.LayerNorm(n_embd)
+
+        nn.init.normal_(self.cls_token, mean=0.0, std=0.02)
+        nn.init.normal_(self.position_embedding, mean=0.0, std=0.02)
+
+    def forward(self, local_observation):
+        if local_observation.size(-1) != self.obs_dim:
+            raise ValueError(
+                "DG-MAT local observation dimension mismatch: "
+                f"{local_observation.size(-1)} != {self.obs_dim}."
+            )
+
+        if self.padded_obs_dim != self.obs_dim:
+            local_observation = F.pad(
+                local_observation,
+                (0, self.padded_obs_dim - self.obs_dim),
+            )
+
+        chunks = local_observation.reshape(
+            local_observation.size(0), self.num_tokens, self.chunk_dim
+        )
+        feature_tokens = F.gelu(self.chunk_projection(chunks))
+        cls_token = self.cls_token.expand(local_observation.size(0), -1, -1)
+        tokens = torch.cat((cls_token, feature_tokens), dim=1)
+        tokens = tokens + self.position_embedding
+
+        for layer in self.layers:
+            tokens = layer(tokens)
+
+        return self.output_norm(tokens[:, 0, :])
+
+
+class DistributedLocalObservationEncoder(nn.Module):
+    """One independently parameterized local self-attention encoder per agent."""
+
+    def __init__(
+        self,
+        obs_dim,
+        n_embd,
+        n_head,
+        n_agent,
+        n_block=1,
+        obs_tokens=8,
+        dropout=0.0,
+        ff_mult=2,
+    ):
+        super().__init__()
+        self.agent_encoders = nn.ModuleList(
+            [
+                LocalObservationSelfAttentionEncoder(
+                    obs_dim=obs_dim,
+                    n_embd=n_embd,
+                    n_head=n_head,
+                    n_block=n_block,
+                    obs_tokens=obs_tokens,
+                    dropout=dropout,
+                    ff_mult=ff_mult,
+                )
+                for _ in range(n_agent)
+            ]
+        )
+
+    def forward(self, observations):
+        return torch.stack(
+            [
+                encoder(observations[:, agent_id, :])
+                for agent_id, encoder in enumerate(self.agent_encoders)
+            ],
+            dim=1,
+        )
+
+
+class LatentGraphCommunicationBlock(nn.Module):
+    """Aggregate sender-owned latent messages for one receiver over the graph."""
+
+    def __init__(self, n_embd, n_head, dropout=0.0, ff_mult=2):
+        super().__init__()
+        if n_embd % n_head != 0:
+            raise ValueError(
+                f"DG-MAT requires n_embd ({n_embd}) to be divisible by n_head ({n_head})."
+            )
+
+        self.message_norm = nn.LayerNorm(n_embd)
         self.attention = nn.MultiheadAttention(
             embed_dim=n_embd,
             num_heads=n_head,
@@ -43,19 +196,17 @@ class LocalGraphAttentionBlock(nn.Module):
         )
         self.output_norm = nn.LayerNorm(n_embd)
 
-    def forward(self, observations, receiver_id, adjacency):
-        tokens = torch.nn.functional.gelu(
-            self.obs_projection(self.obs_norm(observations))
-        )
-        query = tokens[:, receiver_id : receiver_id + 1, :]
+    def forward(self, messages, receiver_id, adjacency):
+        normalized_messages = self.message_norm(messages)
+        query = normalized_messages[:, receiver_id : receiver_id + 1, :]
 
         # MultiheadAttention masks entries whose value is True. Self-loops are
         # added before this block, so every receiver always has a valid key.
         neighbor_mask = adjacency[:, receiver_id, :] <= 0
         attended, _ = self.attention(
             query,
-            tokens,
-            tokens,
+            normalized_messages,
+            normalized_messages,
             key_padding_mask=neighbor_mask,
             need_weights=False,
         )
@@ -64,15 +215,14 @@ class LocalGraphAttentionBlock(nn.Module):
         return hidden[:, 0, :]
 
 
-class DistributedGraphAttention(nn.Module):
-    """One independently parameterized graph-attention encoder per agent."""
+class DistributedLatentGraphCommunication(nn.Module):
+    """One independently parameterized latent-message aggregator per agent."""
 
-    def __init__(self, obs_dim, n_embd, n_head, n_agent, dropout=0.0, ff_mult=2):
+    def __init__(self, n_embd, n_head, n_agent, dropout=0.0, ff_mult=2):
         super().__init__()
         self.agent_blocks = nn.ModuleList(
             [
-                LocalGraphAttentionBlock(
-                    obs_dim=obs_dim,
+                LatentGraphCommunicationBlock(
                     n_embd=n_embd,
                     n_head=n_head,
                     dropout=dropout,
@@ -82,10 +232,10 @@ class DistributedGraphAttention(nn.Module):
             ]
         )
 
-    def forward(self, observations, adjacency):
+    def forward(self, messages, adjacency):
         return torch.stack(
             [
-                block(observations, agent_id, adjacency)
+                block(messages, agent_id, adjacency)
                 for agent_id, block in enumerate(self.agent_blocks)
             ],
             dim=1,
@@ -101,10 +251,11 @@ class AgentLogStd(nn.Module):
 class DGMAT(nn.Module):
     """Distributed Graph Multi-Agent Transformer.
 
-    DG-MAT keeps one actor, critic, actor-attention encoder, and
-    critic-attention encoder per agent. Each attention encoder can attend only
-    to the receiver's graph neighbors (plus itself). The trainer owns the
-    D-SGD parameter mixing step across these per-agent modules.
+    Every agent first uses its own self-attention encoder to turn only its
+    local observation into a latent message. Those sender-owned messages are
+    then communicated through a graph-masked attention block. Actor and critic
+    paths are independent, and the trainer owns the D-SGD parameter mixing
+    step across all per-agent modules.
     """
 
     def __init__(
@@ -125,7 +276,7 @@ class DGMAT(nn.Module):
         num_quants=1,
     ):
         super().__init__()
-        del state_dim, n_block, dec_actor, share_actor
+        del state_dim, dec_actor, share_actor
 
         self.n_agent = n_agent
         self.obs_dim = obs_dim
@@ -147,12 +298,41 @@ class DGMAT(nn.Module):
 
         dropout = float(getattr(args, "dg_mat_dropout", 0.0))
         ff_mult = int(getattr(args, "dg_mat_ff_mult", 2))
+        obs_tokens = int(getattr(args, "dg_mat_obs_tokens", 8))
 
-        self.actor_attention = DistributedGraphAttention(
-            obs_dim, n_embd, n_head, n_agent, dropout=dropout, ff_mult=ff_mult
+        self.actor_local_encoder = DistributedLocalObservationEncoder(
+            obs_dim=obs_dim,
+            n_embd=n_embd,
+            n_head=n_head,
+            n_agent=n_agent,
+            n_block=n_block,
+            obs_tokens=obs_tokens,
+            dropout=dropout,
+            ff_mult=ff_mult,
         )
-        self.critic_attention = DistributedGraphAttention(
-            obs_dim, n_embd, n_head, n_agent, dropout=dropout, ff_mult=ff_mult
+        self.critic_local_encoder = DistributedLocalObservationEncoder(
+            obs_dim=obs_dim,
+            n_embd=n_embd,
+            n_head=n_head,
+            n_agent=n_agent,
+            n_block=n_block,
+            obs_tokens=obs_tokens,
+            dropout=dropout,
+            ff_mult=ff_mult,
+        )
+        self.actor_communication = DistributedLatentGraphCommunication(
+            n_embd=n_embd,
+            n_head=n_head,
+            n_agent=n_agent,
+            dropout=dropout,
+            ff_mult=ff_mult,
+        )
+        self.critic_communication = DistributedLatentGraphCommunication(
+            n_embd=n_embd,
+            n_head=n_head,
+            n_agent=n_agent,
+            dropout=dropout,
+            ff_mult=ff_mult,
         )
 
         self.actor_heads = nn.ModuleList(
@@ -185,6 +365,8 @@ class DGMAT(nn.Module):
                 [AgentLogStd(action_dim) for _ in range(n_agent)]
             )
 
+        self.last_actor_messages = None
+        self.last_critic_messages = None
         self.last_actor_context = None
         self.last_critic_context = None
         self.to(device)
@@ -224,10 +406,14 @@ class DGMAT(nn.Module):
 
         actor_context = None
         if include_actor:
-            actor_context = self.actor_attention(observations, adjacency)
+            actor_messages = self.actor_local_encoder(observations)
+            self.last_actor_messages = actor_messages
+            actor_context = self.actor_communication(actor_messages, adjacency)
             self.last_actor_context = actor_context
 
-        critic_context = self.critic_attention(observations, adjacency)
+        critic_messages = self.critic_local_encoder(observations)
+        self.last_critic_messages = critic_messages
+        critic_context = self.critic_communication(critic_messages, adjacency)
         self.last_critic_context = critic_context
         return observations, adjacency, actor_context, critic_context
 

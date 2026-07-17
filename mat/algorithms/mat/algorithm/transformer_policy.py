@@ -156,10 +156,24 @@ class TransformerPolicy:
         if self.algorithm_name == "dg_mat":
             params = []
             params.extend(
-                self.transformer.actor_attention.agent_blocks[agent_idx].parameters()
+                self.transformer.actor_local_encoder.agent_encoders[
+                    agent_idx
+                ].parameters()
             )
             params.extend(
-                self.transformer.critic_attention.agent_blocks[agent_idx].parameters()
+                self.transformer.critic_local_encoder.agent_encoders[
+                    agent_idx
+                ].parameters()
+            )
+            params.extend(
+                self.transformer.actor_communication.agent_blocks[
+                    agent_idx
+                ].parameters()
+            )
+            params.extend(
+                self.transformer.critic_communication.agent_blocks[
+                    agent_idx
+                ].parameters()
             )
             params.extend(self.transformer.actor_heads[agent_idx].parameters())
             params.extend(self.transformer.critic_heads[agent_idx].parameters())
@@ -391,8 +405,10 @@ class TransformerPolicy:
             "encoder.head_.",
             "obs_encoder.agent_encoders.",
             "obs_encoder.node_classifier_heads.",
-            "actor_attention.agent_blocks.",
-            "critic_attention.agent_blocks.",
+            "actor_local_encoder.agent_encoders.",
+            "critic_local_encoder.agent_encoders.",
+            "actor_communication.agent_blocks.",
+            "critic_communication.agent_blocks.",
             "actor_heads.",
             "critic_heads.",
         )
@@ -410,11 +426,33 @@ class TransformerPolicy:
     def _clone_dgnn_agent_slot(self, src_agent, dst_agent):
         if self.algorithm_name == "dg_mat":
             with torch.no_grad():
-                self.transformer.actor_attention.agent_blocks[dst_agent].load_state_dict(
-                    self.transformer.actor_attention.agent_blocks[src_agent].state_dict()
+                self.transformer.actor_local_encoder.agent_encoders[
+                    dst_agent
+                ].load_state_dict(
+                    self.transformer.actor_local_encoder.agent_encoders[
+                        src_agent
+                    ].state_dict()
                 )
-                self.transformer.critic_attention.agent_blocks[dst_agent].load_state_dict(
-                    self.transformer.critic_attention.agent_blocks[src_agent].state_dict()
+                self.transformer.critic_local_encoder.agent_encoders[
+                    dst_agent
+                ].load_state_dict(
+                    self.transformer.critic_local_encoder.agent_encoders[
+                        src_agent
+                    ].state_dict()
+                )
+                self.transformer.actor_communication.agent_blocks[
+                    dst_agent
+                ].load_state_dict(
+                    self.transformer.actor_communication.agent_blocks[
+                        src_agent
+                    ].state_dict()
+                )
+                self.transformer.critic_communication.agent_blocks[
+                    dst_agent
+                ].load_state_dict(
+                    self.transformer.critic_communication.agent_blocks[
+                        src_agent
+                    ].state_dict()
                 )
                 self.transformer.actor_heads[dst_agent].load_state_dict(
                     self.transformer.actor_heads[src_agent].state_dict()

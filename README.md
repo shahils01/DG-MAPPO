@@ -59,10 +59,12 @@ If you would like to change the configs of experiments, you could modify sh file
 ### DG-MAT
 
 `dg_mat` combines DG-MAPPO-style graph-local execution and D-SGD parameter
-mixing with separate multi-head attention encoders in every agent's actor and
-critic. Attention is masked by the current communication graph and always
-includes a self-loop. Graph encodings are recomputed inside PPO, so the actor
-and critic attention networks receive end-to-end gradients.
+mixing with separate actor and critic attention paths. Every agent first uses
+its own self-attention encoder over tokenized features from only its local
+observation. The resulting sender-owned latent state is communicated to
+one-hop neighbors and aggregated by graph-masked attention, with a self-loop
+always included. All encodings are recomputed inside PPO, so both local and
+communication attention networks receive end-to-end gradients.
 
 Example for SMAC:
 
@@ -81,8 +83,10 @@ python mat/scripts/train/train_smac.py \
   --ppo_epoch 10 \
   --clip_param 0.05 \
   --lr 5e-4 \
+  --n_block 1 \
   --n_embd 64 \
   --n_head 1 \
+  --dg_mat_obs_tokens 8 \
   --entropy_coef 0.01 \
   --consensusLoss True \
   --use_eval

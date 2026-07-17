@@ -308,6 +308,8 @@ def get_config():
                         help="dropout used by DG-MAT actor/critic attention blocks")
     parser.add_argument("--dg_mat_ff_mult", type=int, default=2,
                         help="DG-MAT attention feed-forward expansion multiplier")
+    parser.add_argument("--dg_mat_obs_tokens", type=int, default=8,
+                        help="number of contiguous feature tokens used by each DG-MAT local observation self-attention encoder")
 
     # add for online multi-task
     parser.add_argument("--train_maps", type=str, nargs='+', default=None)
