@@ -356,8 +356,13 @@ class SMACRunner(Runner):
             eval_actions = eval_actions.reshape(self.n_eval_rollout_threads, self.num_agents, -1)
             eval_rnn_states = eval_rnn_states.reshape(self.n_eval_rollout_threads, self.num_agents, -1)
             
-            # Obser reward and next obs
-            eval_obs, eval_share_obs, eval_rewards, eval_dones, eval_infos, eval_available_actions = self.eval_envs.step(eval_actions)
+            # Environment workers are CPU-only subprocesses. Passing a CUDA
+            # tensor through their multiprocessing pipes invokes CUDA IPC and
+            # can terminate the worker, surfacing here as an EOFError/"Lost
+            # connection to SMAC environment worker". Match the training path
+            # by converting actions to a regular CPU NumPy array first.
+            eval_actions_env = _t2n(eval_actions)
+            eval_obs, eval_share_obs, eval_rewards, eval_dones, eval_infos, eval_available_actions = self.eval_envs.step(eval_actions_env)
             eval_obs = torch.tensor(eval_obs, dtype=torch.float32, device="cuda:0")
             eval_share_obs = torch.tensor(eval_share_obs, dtype=torch.float32, device="cuda:0")
             eval_dones = torch.tensor(eval_dones, dtype=torch.float32, device="cuda:0")
