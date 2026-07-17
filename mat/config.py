@@ -158,8 +158,8 @@ def get_config():
 
     # prepare parameters
     parser.add_argument("--algorithm_name", type=str,
-                        default='mat', choices=["mat", "mat_dec", "mat_encoder", "mat_decoder", "mat_gru", "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd", "ippo", "consensus_ippo", "dgn"],
-                        help="mappo_dgnn: distributed GNN with consensus loss, mappo_gnn: shared trunk GNN with consensus loss, mappo_dgnn_dsgd: distributed GNN with D-SGD, consensus_ippo: IPPO with graph-neighbor critic consensus, dgn: DGN graph-attention baseline")
+                        default='mat', choices=["mat", "mat_dec", "mat_encoder", "mat_decoder", "mat_gru", "dg_mat", "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd", "ippo", "consensus_ippo", "dgn"],
+                        help="dg_mat: distributed graph-masked attention actor/critic with D-SGD; mappo_dgnn: distributed GNN with consensus loss, mappo_gnn: shared trunk GNN with consensus loss, mappo_dgnn_dsgd: distributed GNN with D-SGD, consensus_ippo: IPPO with graph-neighbor critic consensus, dgn: DGN graph-attention baseline")
 
     parser.add_argument("--experiment_name", type=str, default="check", help="an identifier to distinguish different experiment.")
     parser.add_argument("--seed", type=int, default=1, help="Random seed for numpy/torch")
@@ -304,6 +304,10 @@ def get_config():
     parser.add_argument("--n_head", type=int, default=1)
     parser.add_argument("--dec_actor", action='store_true', default=False)
     parser.add_argument("--share_actor", action='store_true', default=False)
+    parser.add_argument("--dg_mat_dropout", type=float, default=0.0,
+                        help="dropout used by DG-MAT actor/critic attention blocks")
+    parser.add_argument("--dg_mat_ff_mult", type=int, default=2,
+                        help="DG-MAT attention feed-forward expansion multiplier")
 
     # add for online multi-task
     parser.add_argument("--train_maps", type=str, nargs='+', default=None)

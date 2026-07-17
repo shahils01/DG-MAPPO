@@ -60,6 +60,11 @@ class TransformerPolicy:
         elif self.algorithm_name == "mat_encoder":
             from mat.algorithms.mat.algorithm.mat_encoder import MultiAgentEncoder as MAT
 
+        elif self.algorithm_name == "dg_mat":
+            from mat.algorithms.mat.algorithm.dg_mat import DGMAT as MAT
+            self.obs_dim_ = self.obs_dim
+            self.truelyDistributed = True
+
         elif self.algorithm_name == "mappo_gnn" or self.algorithm_name == "mappo_dgnn" or self.algorithm_name == 'mappo_dgnn_dsgd':
             from mat.algorithms.mat.algorithm.ma_gnn_transformer_new import MultiAgentGnnTransformer as MAT
             if args.iterations > 0:
@@ -95,7 +100,17 @@ class TransformerPolicy:
                                             lr=self.lr, eps=self.opti_eps,
                                             weight_decay=self.weight_decay)
         else:
-            if self.algorithm_name == "mappo_dgnn" or self.algorithm_name == "mappo_dgnn_dsgd":
+            if self.algorithm_name == "dg_mat":
+                self.optimizers = [
+                    torch.optim.Adam(
+                        self.agent_parameters(i),
+                        lr=self.lr,
+                        eps=self.opti_eps,
+                        weight_decay=self.weight_decay,
+                    )
+                    for i in range(self.num_agents)
+                ]
+            elif self.algorithm_name == "mappo_dgnn" or self.algorithm_name == "mappo_dgnn_dsgd":
                 self.optimizers = [
                     torch.optim.Adam(
                         list(self.transformer.decoder.mlp_[i].parameters()) +
@@ -138,6 +153,20 @@ class TransformerPolicy:
 
     def agent_parameters(self, agent_idx):
         """Returns all parameters specific to one agent"""
+        if self.algorithm_name == "dg_mat":
+            params = []
+            params.extend(
+                self.transformer.actor_attention.agent_blocks[agent_idx].parameters()
+            )
+            params.extend(
+                self.transformer.critic_attention.agent_blocks[agent_idx].parameters()
+            )
+            params.extend(self.transformer.actor_heads[agent_idx].parameters())
+            params.extend(self.transformer.critic_heads[agent_idx].parameters())
+            if self.action_type != "Discrete":
+                params.extend(self.transformer.log_std[agent_idx].parameters())
+            return list(params)
+
         params = []
         
         # MLP and head parameters
@@ -163,7 +192,7 @@ class TransformerPolicy:
         update_linear_schedule(optimizers, episode, episodes, self.lr)
 
     def get_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, masks, available_actions=None,
-                    batched_edge_index=None, deterministic=False):
+                    batched_edge_index=None, deterministic=False, adjacency_matrix=None):
         """
         Compute actions and value function predictions for the given inputs.
         :param cent_obs (np.ndarray): centralized input to the critic.
@@ -187,6 +216,21 @@ class TransformerPolicy:
         
         if available_actions is not None:
             available_actions = available_actions.reshape(-1, self.num_agents, self.act_dim)
+
+        if self.algorithm_name == "dg_mat":
+            actions, action_log_probs, values = self.transformer.get_actions(
+                cent_obs,
+                obs,
+                available_actions,
+                deterministic,
+                adjacency_matrix=adjacency_matrix,
+            )
+            actions = actions.view(-1, self.act_num)
+            action_log_probs = action_log_probs.view(-1, self.act_num)
+            values = values.view(-1, self.num_quants)
+            rnn_states_actor = check(rnn_states_actor).to(**self.tpdv)
+            rnn_states_critic = check(rnn_states_critic).to(**self.tpdv)
+            return values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
 
         if batched_edge_index is None:
             actions, action_log_probs, values = self.transformer.get_actions(cent_obs,
@@ -218,7 +262,8 @@ class TransformerPolicy:
             return values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
         
 
-    def get_values(self, cent_obs, obs, rnn_states_critic, masks, available_actions=None):
+    def get_values(self, cent_obs, obs, rnn_states_critic, masks, available_actions=None,
+                   adjacency_matrix=None):
         """
         Get value function predictions.
         :param cent_obs (np.ndarray): centralized input to the critic.
@@ -233,14 +278,23 @@ class TransformerPolicy:
         if available_actions is not None:
             available_actions = available_actions.reshape(-1, self.num_agents, self.act_dim)
 
-        values = self.transformer.get_values(cent_obs, obs, available_actions)
+        if self.algorithm_name == "dg_mat":
+            values = self.transformer.get_values(
+                cent_obs,
+                obs,
+                available_actions,
+                adjacency_matrix=adjacency_matrix,
+            )
+        else:
+            values = self.transformer.get_values(cent_obs, obs, available_actions)
 
         values = values.view(-1, self.num_quants)
 
         return values
 
     def evaluate_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, actions, masks,
-                         available_actions=None, active_masks=None, agent_id=None, action_hats=None):
+                         available_actions=None, active_masks=None, agent_id=None, action_hats=None,
+                         adjacency_matrix=None):
         """
         Get action logprobs / entropy and value function predictions for actor update.
         :param cent_obs (np.ndarray): centralized input to the critic.
@@ -265,21 +319,33 @@ class TransformerPolicy:
         if available_actions is not None:
             available_actions = available_actions.reshape(-1, self.num_agents, self.act_dim)
 
-        action_log_probs, values, entropy = self.transformer(cent_obs, obs, actions, available_actions)
+        if self.algorithm_name == "dg_mat":
+            action_log_probs, values, entropy = self.transformer(
+                cent_obs,
+                obs,
+                actions,
+                available_actions,
+                adjacency_matrix=adjacency_matrix,
+            )
+        else:
+            action_log_probs, values, entropy = self.transformer(
+                cent_obs, obs, actions, available_actions
+            )
 
         action_log_probs = action_log_probs.view(-1, self.num_agents, self.act_num)
         values = values.view(-1, self.num_agents, self.num_quants)
         entropy = entropy.view(-1, self.num_agents, self.act_num)
 
         if self._use_policy_active_masks and active_masks is not None:
-            entropy = (entropy*active_masks).sum(dim=0)/active_masks.sum(dim=0)
+            entropy = (entropy*active_masks).sum(dim=0)/active_masks.sum(dim=0).clamp_min(1.0)
             # entropy = entropy.mean(dim=0)
         else:
             entropy = entropy.mean(dim=0)
 
         return values, action_log_probs, entropy
 
-    def act(self, cent_obs, obs, rnn_states_actor, masks, available_actions=None, deterministic=True, batched_edge_index=None):
+    def act(self, cent_obs, obs, rnn_states_actor, masks, available_actions=None, deterministic=True,
+            batched_edge_index=None, adjacency_matrix=None):
         """
         Compute actions using the given inputs.
         :param obs (np.ndarray): local agent inputs to the actor.
@@ -300,7 +366,8 @@ class TransformerPolicy:
                                                                 masks,
                                                                 available_actions,
                                                                 None,
-                                                                deterministic)
+                                                                deterministic,
+                                                                adjacency_matrix)
         else:
             _, actions, _, rnn_states_actor, _ = self.get_actions(cent_obs,
                                                                 obs,
@@ -309,7 +376,8 @@ class TransformerPolicy:
                                                                 masks,
                                                                 available_actions,
                                                                 batched_edge_index,
-                                                                deterministic)
+                                                                deterministic,
+                                                                adjacency_matrix)
 
         return actions, rnn_states_actor
 
@@ -323,6 +391,10 @@ class TransformerPolicy:
             "encoder.head_.",
             "obs_encoder.agent_encoders.",
             "obs_encoder.node_classifier_heads.",
+            "actor_attention.agent_blocks.",
+            "critic_attention.agent_blocks.",
+            "actor_heads.",
+            "critic_heads.",
         )
 
         for key in state_dict.keys():
@@ -336,6 +408,26 @@ class TransformerPolicy:
         return max_idx + 1 if max_idx >= 0 else None
 
     def _clone_dgnn_agent_slot(self, src_agent, dst_agent):
+        if self.algorithm_name == "dg_mat":
+            with torch.no_grad():
+                self.transformer.actor_attention.agent_blocks[dst_agent].load_state_dict(
+                    self.transformer.actor_attention.agent_blocks[src_agent].state_dict()
+                )
+                self.transformer.critic_attention.agent_blocks[dst_agent].load_state_dict(
+                    self.transformer.critic_attention.agent_blocks[src_agent].state_dict()
+                )
+                self.transformer.actor_heads[dst_agent].load_state_dict(
+                    self.transformer.actor_heads[src_agent].state_dict()
+                )
+                self.transformer.critic_heads[dst_agent].load_state_dict(
+                    self.transformer.critic_heads[src_agent].state_dict()
+                )
+                if self.action_type != "Discrete":
+                    self.transformer.log_std[dst_agent].load_state_dict(
+                        self.transformer.log_std[src_agent].state_dict()
+                    )
+            return
+
         with torch.no_grad():
             self.transformer.decoder.mlp_[dst_agent].load_state_dict(
                 self.transformer.decoder.mlp_[src_agent].state_dict()
@@ -447,7 +539,7 @@ class TransformerPolicy:
                 print(f"  ... and {len(skipped) - 20} more.")
 
         # Optional: clone one trained agent into newly added slots for non-shared DGNN policies.
-        if self.algorithm_name in ("mappo_dgnn", "mappo_dgnn_dsgd") and self.clone_extra_agents_from is not None:
+        if self.algorithm_name in ("dg_mat", "mappo_dgnn", "mappo_dgnn_dsgd") and self.clone_extra_agents_from is not None:
             ckpt_agents = self._infer_checkpoint_agent_count(transformer_state_dict)
             if ckpt_agents is not None and self.num_agents > ckpt_agents:
                 src_agent = int(self.clone_extra_agents_from)

@@ -129,20 +129,26 @@ class Runner(object):
         raise NotImplementedError
     
     @torch.no_grad()
-    def compute(self):
+    def compute(self, adjacency_matrix=None):
         """Calculate returns for the collected data."""
         self.trainer.prep_rollout()
         if self.buffer.available_actions is None:
-            next_values = self.trainer.policy.get_values(self.buffer.share_obs[-1],
-                                                         self.buffer.obs[-1],
-                                                         self.buffer.rnn_states_critic[-1],
-                                                         self.buffer.masks[-1])
+            next_values = self.trainer.policy.get_values(
+                self.buffer.share_obs[-1],
+                self.buffer.obs[-1],
+                self.buffer.rnn_states_critic[-1],
+                self.buffer.masks[-1],
+                adjacency_matrix=adjacency_matrix,
+            )
         else:
-            next_values = self.trainer.policy.get_values(self.buffer.share_obs[-1],
-                                                         self.buffer.obs[-1],
-                                                         self.buffer.rnn_states_critic[-1],
-                                                         self.buffer.masks[-1],
-                                                         self.buffer.available_actions[-1])
+            next_values = self.trainer.policy.get_values(
+                self.buffer.share_obs[-1],
+                self.buffer.obs[-1],
+                self.buffer.rnn_states_critic[-1],
+                self.buffer.masks[-1],
+                self.buffer.available_actions[-1],
+                adjacency_matrix=adjacency_matrix,
+            )
 
         # action_log, next_values, _ = self.trainer.policy.transformer(state, obs, action, available_actions, action_hats)
 

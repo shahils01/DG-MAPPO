@@ -56,6 +56,41 @@ When your environment is ready, you could run shells in the "scripts" folder wit
 ```
 If you would like to change the configs of experiments, you could modify sh files or look for config.py for more details.
 
+### DG-MAT
+
+`dg_mat` combines DG-MAPPO-style graph-local execution and D-SGD parameter
+mixing with separate multi-head attention encoders in every agent's actor and
+critic. Attention is masked by the current communication graph and always
+includes a self-loop. Graph encodings are recomputed inside PPO, so the actor
+and critic attention networks receive end-to-end gradients.
+
+Example for SMAC:
+
+```bash
+python mat/scripts/train/train_smac.py \
+  --env_name StarCraft2 \
+  --algorithm_name dg_mat \
+  --experiment_name dg_mat \
+  --map_name 10m_vs_11m \
+  --eval_map_name 10m_vs_11m \
+  --unit_sight_range 9 \
+  --n_rollout_threads 32 \
+  --episode_length 100 \
+  --num_mini_batch 1 \
+  --mini_batch_size 3200 \
+  --ppo_epoch 10 \
+  --clip_param 0.05 \
+  --lr 5e-4 \
+  --n_embd 64 \
+  --n_head 1 \
+  --entropy_coef 0.01 \
+  --consensusLoss True \
+  --use_eval
+```
+
+Do not pass `--encode_state` to DG-MAT. DG-MAT intentionally learns its actor
+and critic representations from graph-local observations.
+
 
 ## Multi-Agent Sequential Decision Paradigm
 
@@ -108,4 +143,3 @@ Please cite as following if you think this work is helpful for you:
   year={2022}
 }
 ```
-

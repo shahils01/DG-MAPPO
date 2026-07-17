@@ -13,7 +13,7 @@ from mat.envs.starcraft2.StarCraft2_Env import StarCraft2Env
 def _t2n(x):
     return x.detach().cpu().numpy()
 
-GRAPH_ALGORITHMS = {"mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd", "consensus_ippo"}
+GRAPH_ALGORITHMS = {"dg_mat", "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd", "consensus_ippo"}
 GNN_ALGORITHMS = {"mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd"}
 
 class SMACRunner(Runner):
@@ -76,15 +76,22 @@ class SMACRunner(Runner):
 
             edge_index = None
             batch_edge_index = None
+            adjcency_matrix = None
             if self.algorithm_name in GRAPH_ALGORITHMS:
                 edge_index = self.envs.get_edge_index_matrix()
                 edge_index = torch.tensor(edge_index, dtype=torch.float32, device="cuda:0")
                 batch_edge_index = self.get_batch_edge_index(edge_index)
+                adjcency_matrix = self.envs.get_visibility_matrix()[:, :, :self.num_agents]
+                adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device="cuda:0")
 
             for step in range(self.episode_length):
                 # Sample actions
                 if self.algorithm_name in GNN_ALGORITHMS:
                     values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step, batch_edge_index)
+                elif self.algorithm_name == "dg_mat":
+                    values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(
+                        step, adjacency_matrix=adjcency_matrix
+                    )
                 else:
                     values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step)
                 
@@ -97,8 +104,7 @@ class SMACRunner(Runner):
                 dones = torch.tensor(dones, dtype=torch.float32, device="cuda:0")
                 available_actions = torch.tensor(available_actions, dtype=torch.float32, device="cuda:0")
 
-                adjcency_matrix = None
-                if self.algorithm_name in GRAPH_ALGORITHMS:
+                if self.algorithm_name in GRAPH_ALGORITHMS and self.algorithm_name != "dg_mat":
                     edge_index = self.envs.get_edge_index_matrix()
                     edge_index = torch.tensor(edge_index, dtype=torch.float32, device="cuda:0")
                     batch_edge_index = self.get_batch_edge_index(edge_index)
@@ -113,8 +119,25 @@ class SMACRunner(Runner):
                 # insert data into buffer
                 self.insert(data, batch_edge_index, edge_index, adjcency_matrix)
 
+                # DG-MAT stores the graph that generated the current action,
+                # then obtains the next graph for the next observation and the
+                # final bootstrap value. This keeps graph and transition time
+                # indices aligned.
+                if self.algorithm_name == "dg_mat":
+                    edge_index = self.envs.get_edge_index_matrix()
+                    edge_index = torch.tensor(edge_index, dtype=torch.float32, device="cuda:0")
+                    batch_edge_index = self.get_batch_edge_index(edge_index)
+                    adjcency_matrix = self.envs.get_visibility_matrix()[:, :, :self.num_agents]
+                    adjcency_matrix = torch.tensor(
+                        adjcency_matrix, dtype=torch.float32, device="cuda:0"
+                    )
+
             # compute return and update network
-            self.compute()
+            self.compute(
+                adjacency_matrix=adjcency_matrix
+                if self.algorithm_name == "dg_mat"
+                else None
+            )
             train_infos = self.train(episode)
             
             # post process
@@ -208,7 +231,7 @@ class SMACRunner(Runner):
         self.buffer.available_actions[0] = available_actions.clone()
 
     @torch.no_grad()
-    def collect(self, step, batched_edge_index=None):
+    def collect(self, step, batched_edge_index=None, adjacency_matrix=None):
         self.trainer.prep_rollout()
         value, action, action_log_prob, rnn_state, rnn_state_critic = self.trainer.policy.get_actions(
                         self.buffer.share_obs[step],
@@ -217,7 +240,8 @@ class SMACRunner(Runner):
                         self.buffer.rnn_states_critic[step],
                         self.buffer.masks[step],
                         self.buffer.available_actions[step],
-                        batched_edge_index
+                        batched_edge_index,
+                        adjacency_matrix=adjacency_matrix,
                     )
 
         # [self.envs, agents, dim]
@@ -285,6 +309,7 @@ class SMACRunner(Runner):
         eval_battles_won = 0
         eval_episode = 0
         batch_edge_index = None
+        adjcency_matrix = None
         avg_node_degree = 0
 
         eval_episode_rewards = []
@@ -311,6 +336,12 @@ class SMACRunner(Runner):
 
                     eval_obs = torch.cat([eval_obs,x],dim=-1).detach()
                     # eval_obs = eval_obs.cpu().detach().numpy()
+
+            if self.algorithm_name == "dg_mat":
+                adjcency_matrix = self.eval_envs.get_visibility_matrix()[:, :, :self.num_agents]
+                adjcency_matrix = torch.tensor(
+                    adjcency_matrix, dtype=torch.float32, device="cuda:0"
+                )
             
             self.trainer.prep_rollout()
             eval_actions, eval_rnn_states = \
@@ -320,7 +351,8 @@ class SMACRunner(Runner):
                                         eval_masks,
                                         eval_available_actions,
                                         deterministic=True,
-                                        batched_edge_index=batch_edge_index)
+                                        batched_edge_index=batch_edge_index,
+                                        adjacency_matrix=adjcency_matrix)
             eval_actions = eval_actions.reshape(self.n_eval_rollout_threads, self.num_agents, -1)
             eval_rnn_states = eval_rnn_states.reshape(self.n_eval_rollout_threads, self.num_agents, -1)
             

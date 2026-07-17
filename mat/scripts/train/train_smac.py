@@ -131,6 +131,16 @@ def main(args):
         all_args.share_actor = True
         all_args.truelyDistributed = False
 
+    if all_args.algorithm_name == "dg_mat":
+        # DG-MAT owns one graph-attention actor/critic pair per agent and uses
+        # graph-neighbor D-SGD. It deliberately avoids MAT's broken zero-state
+        # encode_state path.
+        all_args.encode_state = False
+        all_args.dec_actor = False
+        all_args.share_actor = False
+        all_args.share_policy = False
+        all_args.truelyDistributed = True
+
     if all_args.algorithm_name == "mat_gnn":
         all_args.strict_local_obs = False
 

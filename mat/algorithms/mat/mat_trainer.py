@@ -29,7 +29,7 @@ class MATTrainer:
         self.num_quants = args.n_quants
         self.n_embd = args.n_embd
         self.truelyDistributed = policy.truelyDistributed
-        self.consensusLoss = args.consensusLoss and args.algorithm_name in {"mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd"}
+        self.consensusLoss = args.consensusLoss and args.algorithm_name in {"dg_mat", "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd"}
         self.critic_consensus = args.algorithm_name == "consensus_ippo"
         self.avg_critic = args.avg_critic
 
@@ -113,7 +113,7 @@ class MATTrainer:
 
         if self._use_value_active_masks:
             # Calculate per-agent policy loss with active masks
-            value_loss = (value_loss * active_masks_batch).sum(dim=0) / active_masks_batch.sum(dim=0)
+            value_loss = (value_loss * active_masks_batch).sum(dim=0) / active_masks_batch.sum(dim=0).clamp_min(1.0)
         else:
             # Calculate per-agent policy loss without active masks
             value_loss = value_loss.mean(dim=0)
@@ -310,6 +310,7 @@ class MATTrainer:
                 masks_batch,
                 available_actions_batch,
                 active_masks_batch,
+                adjacency_matrix=adjcency_matrix_batch,
             )
         
         if action_log_probs.shape[-1] != 1:
@@ -340,7 +341,15 @@ class MATTrainer:
             )
         
         if self.consensusLoss:
-            gnn_consensus_loss = self.adj_gnn_consensus_loss(obs_batch[:,:,self.policy.obs_dim:], adjcency_matrix_batch)
+            if self.policy.algorithm_name == "dg_mat":
+                actor_context = self.policy.transformer.last_actor_context
+                critic_context = self.policy.transformer.last_critic_context
+                attention_context = 0.5 * (actor_context + critic_context)
+                gnn_consensus_loss = self.adj_gnn_consensus_loss(
+                    attention_context, adjcency_matrix_batch
+                )
+            else:
+                gnn_consensus_loss = self.adj_gnn_consensus_loss(obs_batch[:,:,self.policy.obs_dim:], adjcency_matrix_batch)
             loss = policy_loss - dist_entropy * self.entropy_coef + value_loss * self.value_loss_coef + self.gnn_loss_coef * gnn_consensus_loss 
         else:
             gnn_consensus_loss = torch.zeros(self.num_agents, 1, dtype=torch.float32, device=self.device)
@@ -412,6 +421,30 @@ class MATTrainer:
                 # average_attention_params_by_adj(self.policy.transformer.obs_encoder.hop_biases, adjcency_matrix_batch[0])
                 average_agent_encoders_by_adj(self.policy.transformer.encoder.head_, adjcency_matrix_batch[0])
                 average_agent_encoders_by_adj(self.policy.transformer.decoder.mlp_, adjcency_matrix_batch[0])
+
+            elif self.policy.algorithm_name == "dg_mat":
+                mixing_adjacency = adjcency_matrix_batch.float().mean(dim=0)
+                average_agent_encoders_by_adj(
+                    self.policy.transformer.actor_attention.agent_blocks,
+                    mixing_adjacency,
+                )
+                average_agent_encoders_by_adj(
+                    self.policy.transformer.critic_attention.agent_blocks,
+                    mixing_adjacency,
+                )
+                average_agent_encoders_by_adj(
+                    self.policy.transformer.actor_heads,
+                    mixing_adjacency,
+                )
+                average_agent_encoders_by_adj(
+                    self.policy.transformer.critic_heads,
+                    mixing_adjacency,
+                )
+                if self.policy.action_type != "Discrete":
+                    average_agent_encoders_by_adj(
+                        self.policy.transformer.log_std,
+                        mixing_adjacency,
+                    )
 
 
         # Return average losses across agents
