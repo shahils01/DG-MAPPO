@@ -13,7 +13,7 @@ from mat.config import get_config
 from mat.envs.starcraft2.StarCraft2_Env import StarCraft2Env
 # from mat.envs.smacv2.smacv2.env.starcraft2.starcraft2 import StarCraft2Env_ as SMAC_v2
 from mat.envs.starcraft2.Random_StarCraft2_Env import RandomStarCraft2Env
-from mat.envs.env_wrappers import ShareSubprocVecEnv, ShareDummyVecEnv
+from mat.envs.env_wrappers import ShareSubprocVecEnv
 from mat.envs.starcraft2.smac_maps import get_map_params
 # from mat.envs.smacv2.smacv2.env.starcraft2.maps.smac_maps import get_map_params
 # from mat.runner.shared.smac_runner import SMACRunner
@@ -49,10 +49,12 @@ def make_train_env(all_args, env_config=None):
 
         return init_env
 
-    if all_args.n_rollout_threads == 1:
-        return ShareDummyVecEnv([get_env_fn(0, env_config)])
-    else:
-        return ShareSubprocVecEnv([get_env_fn(i, env_config) for i in range(all_args.n_rollout_threads)])
+    # Keep SMAC in subprocesses even for a single rollout thread. An in-process
+    # SC2 controller cannot be interrupted safely when its RPC call hangs.
+    return ShareSubprocVecEnv(
+        [get_env_fn(i, env_config) for i in range(all_args.n_rollout_threads)],
+        timeout=all_args.smac_worker_timeout,
+    )
 
 
 def make_eval_env(all_args, env_config=None):
@@ -80,10 +82,10 @@ def make_eval_env(all_args, env_config=None):
 
         return init_env
 
-    if all_args.n_eval_rollout_threads == 1:
-        return ShareDummyVecEnv([get_env_fn(0, env_config)])
-    else:
-        return ShareSubprocVecEnv([get_env_fn(i, env_config) for i in range(all_args.n_eval_rollout_threads)])
+    return ShareSubprocVecEnv(
+        [get_env_fn(i, env_config) for i in range(all_args.n_eval_rollout_threads)],
+        timeout=all_args.smac_worker_timeout,
+    )
 
 
 def parse_args(args, parser):
@@ -104,10 +106,18 @@ def parse_args(args, parser):
     parser.add_argument("--add_center_xy", action='store_false', default=True)
     parser.add_argument("--random_agent_order", action='store_true', default=False)
     parser.add_argument("--strict_local_obs", type=bool, default=False)
+    parser.add_argument(
+        "--smac_worker_timeout",
+        type=float,
+        default=120.0,
+        help="Kill training if an SMAC worker does not respond within this many seconds",
+    )
 
     all_args = parser.parse_known_args(args)[0]
     if all_args.unit_sight_range <= 0:
         parser.error("--unit_sight_range must be greater than 0")
+    if all_args.smac_worker_timeout <= 0:
+        parser.error("--smac_worker_timeout must be greater than 0")
 
     return all_args
 
@@ -210,18 +220,20 @@ def main(args):
 
     runner_cls = DGNRunner if all_args.algorithm_name == "dgn" else SMACRunner
     runner = runner_cls(config)
-    runner.run()
+    try:
+        runner.run()
+    finally:
+        # These closes are bounded for subprocess environments, so cleanup
+        # cannot hang forever after an SC2 server failure.
+        envs.close()
+        if eval_envs is not None and eval_envs is not envs:
+            eval_envs.close()
 
-    # post process
-    envs.close()
-    if all_args.use_eval and eval_envs is not envs:
-        eval_envs.close()
-
-    if all_args.use_wandb:
-        run.finish()
-    else:
-        runner.writter.export_scalars_to_json(str(runner.log_dir + '/summary.json'))
-        runner.writter.close()
+        if all_args.use_wandb:
+            run.finish()
+        else:
+            runner.writter.export_scalars_to_json(str(runner.log_dir + '/summary.json'))
+            runner.writter.close()
 
 
 if __name__ == "__main__":

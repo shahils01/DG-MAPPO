@@ -1,6 +1,10 @@
 """
 Modified from OpenAI Baselines code to work with multi-agent envs
 """
+import os
+import signal
+import time
+
 import numpy as np
 import torch
 from multiprocessing import Process, Pipe
@@ -325,6 +329,14 @@ class SubprocVecEnv(ShareVecEnv):
 
 
 def shareworker(remote, parent_remote, env_fn_wrapper):
+    # Give each environment worker (and the SC2 process it launches) its own
+    # process group. This lets the parent reliably kill the complete subtree
+    # when SC2 stops responding instead of leaving an orphaned SC2_x64 process.
+    try:
+        os.setsid()
+    except (AttributeError, OSError):
+        pass
+
     parent_remote.close()
     env = env_fn_wrapper.x()
     while True:
@@ -379,10 +391,14 @@ def shareworker(remote, parent_remote, env_fn_wrapper):
 
 
 class ShareSubprocVecEnv(ShareVecEnv):
-    def __init__(self, env_fns, spaces=None):
+    def __init__(self, env_fns, spaces=None, timeout=120):
         """
         envs: list of gym environments to run in subprocesses
         """
+        if timeout <= 0:
+            raise ValueError("SMAC worker timeout must be greater than zero")
+
+        self.timeout = float(timeout)
         self.waiting = False
         self.closed = False
         nenvs = len(env_fns)
@@ -395,12 +411,56 @@ class ShareSubprocVecEnv(ShareVecEnv):
         for remote in self.work_remotes:
             remote.close()
         self.remotes[0].send(('get_num_agents', None))
-        self.n_agents = self.remotes[0].recv()
+        self.n_agents = self._recv_one(0, "startup (get_num_agents)")
         self.remotes[0].send(('get_spaces', None))
-        observation_space, share_observation_space, action_space = self.remotes[0].recv(
+        observation_space, share_observation_space, action_space = self._recv_one(
+            0, "startup (get_spaces)"
         )
         ShareVecEnv.__init__(self, len(env_fns), observation_space,
                              share_observation_space, action_space)        
+
+    def _recv_one(self, index, operation, deadline=None):
+        """Receive one worker response, failing fast on death or timeout."""
+        if deadline is None:
+            deadline = time.monotonic() + self.timeout
+
+        process = self.ps[index]
+        remote = self.remotes[index]
+        remaining = max(0.0, deadline - time.monotonic())
+
+        if not process.is_alive():
+            exitcode = process.exitcode
+            self.abort()
+            raise RuntimeError(
+                f"SMAC environment worker {index} exited during {operation} "
+                f"(exit code {exitcode})"
+            )
+
+        if not remote.poll(remaining):
+            self.abort()
+            raise TimeoutError(
+                f"SMAC environment worker {index} did not respond during "
+                f"{operation} within {self.timeout:g} seconds"
+            )
+
+        try:
+            return remote.recv()
+        except (EOFError, OSError) as exc:
+            exitcode = process.exitcode
+            self.abort()
+            raise RuntimeError(
+                f"Lost connection to SMAC environment worker {index} during "
+                f"{operation} (exit code {exitcode})"
+            ) from exc
+
+    def _recv_all(self, operation):
+        # All workers receive a single shared deadline. With many rollout
+        # threads a failure therefore takes at most `timeout`, not N * timeout.
+        deadline = time.monotonic() + self.timeout
+        return [
+            self._recv_one(index, operation, deadline)
+            for index in range(len(self.remotes))
+        ]
 
     def step_async(self, actions):
         for remote, action in zip(self.remotes, actions):
@@ -408,7 +468,7 @@ class ShareSubprocVecEnv(ShareVecEnv):
         self.waiting = True
 
     def step_wait(self):
-        results = [remote.recv() for remote in self.remotes]
+        results = self._recv_all("step")
         self.waiting = False
         obs, share_obs, rews, dones, infos, available_actions = zip(*results)                                   
         return np.stack(obs), np.stack(share_obs), np.stack(rews), np.stack(dones), infos, np.stack(available_actions)
@@ -416,14 +476,14 @@ class ShareSubprocVecEnv(ShareVecEnv):
     def reset(self):
         for remote in self.remotes:
             remote.send(('reset', None))
-        results = [remote.recv() for remote in self.remotes]
+        results = self._recv_all("reset")
         obs, share_obs, available_actions = zip(*results)
         return np.stack(obs), np.stack(share_obs), np.stack(available_actions)
 
     def get_edge_index_matrix(self, faulty_node=None):
         for remote in self.remotes:
             remote.send(('get_edge_index_matrix', faulty_node))
-        results = [remote.recv() for remote in self.remotes]
+        results = self._recv_all("get_edge_index_matrix")
         edge_index_matrix = list(zip(*results))
 
         return np.stack(edge_index_matrix).transpose(1,0,2)
@@ -431,7 +491,7 @@ class ShareSubprocVecEnv(ShareVecEnv):
     def get_visibility_matrix(self):
         for remote in self.remotes:
             remote.send(('get_visibility_matrix', None))
-        results = [remote.recv() for remote in self.remotes]
+        results = self._recv_all("get_visibility_matrix")
         visibility_matrix = list(zip(*results))
 
         return np.stack(visibility_matrix).transpose(1,0,2)
@@ -439,19 +499,75 @@ class ShareSubprocVecEnv(ShareVecEnv):
     def reset_task(self):
         for remote in self.remotes:
             remote.send(('reset_task', None))
-        return np.stack([remote.recv() for remote in self.remotes])
+        return np.stack(self._recv_all("reset_task"))
+
+    @staticmethod
+    def _signal_process_tree(process, sig):
+        if not process.is_alive():
+            return
+
+        try:
+            # shareworker calls setsid(), so a matching pgid means this is a
+            # private group containing the worker and its SC2 descendants.
+            if hasattr(os, "killpg") and os.getpgid(process.pid) == process.pid:
+                os.killpg(process.pid, sig)
+                return
+        except ProcessLookupError:
+            return
+        except OSError:
+            # If process-group inspection is unavailable, still terminate the
+            # worker itself through multiprocessing's portable API below.
+            pass
+
+        if sig == signal.SIGTERM:
+            process.terminate()
+        else:
+            process.kill()
+
+    def abort(self):
+        """Emergency cleanup that never waits indefinitely for broken workers."""
+        if self.closed:
+            return
+
+        self.waiting = False
+        for process in self.ps:
+            self._signal_process_tree(process, signal.SIGTERM)
+        for process in self.ps:
+            process.join(timeout=5)
+        for process in self.ps:
+            self._signal_process_tree(process, signal.SIGKILL)
+        for process in self.ps:
+            process.join(timeout=1)
+        for remote in self.remotes:
+            remote.close()
+        self.closed = True
 
     def close(self):
         if self.closed:
             return
-        if self.waiting:
+        try:
+            if self.waiting:
+                self._recv_all("pending step during close")
+                self.waiting = False
             for remote in self.remotes:
-                remote.recv()
-        for remote in self.remotes:
-            remote.send(('close', None))
-        for p in self.ps:
-            p.join()
-        self.closed = True
+                remote.send(('close', None))
+            self._recv_closed_workers()
+            for remote in self.remotes:
+                remote.close()
+            self.closed = True
+        except (BrokenPipeError, EOFError, OSError, RuntimeError, TimeoutError):
+            self.abort()
+
+    def _recv_closed_workers(self):
+        deadline = time.monotonic() + self.timeout
+        for index, process in enumerate(self.ps):
+            process.join(timeout=max(0.0, deadline - time.monotonic()))
+            if process.is_alive():
+                self.abort()
+                raise TimeoutError(
+                    f"SMAC environment worker {index} did not exit within "
+                    f"{self.timeout:g} seconds"
+                )
 
 
 def choosesimpleworker(remote, parent_remote, env_fn_wrapper):

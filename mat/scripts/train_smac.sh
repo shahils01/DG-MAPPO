@@ -1,4 +1,25 @@
-#!/bin/sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+training_pid=""
+
+cleanup_training_group() {
+    status=$?
+    trap - EXIT INT TERM
+
+    if [[ -n "${training_pid}" ]] && kill -0 -- "-${training_pid}" 2>/dev/null; then
+        kill -TERM -- "-${training_pid}" 2>/dev/null || true
+        sleep 5
+        kill -KILL -- "-${training_pid}" 2>/dev/null || true
+    fi
+
+    exit "${status}"
+}
+
+trap cleanup_training_group EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 env="StarCraft2"    # StarCraft2 or smacv2
 map="5m_vs_6m"    # 6h_vs_8z, 5m_vs_6m, MMM2, protoss_5_vs_5
 algo="ippo"
@@ -8,7 +29,7 @@ hidden_dim=128
 unit_sight_range=4
 
 echo "env is ${env}, map is ${map}, algo is ${algo}, exp is ${exp}, seed is ${seed}, unit sight range is ${unit_sight_range}"
-CUDA_LAUNCH_BLOCKING=1 python train/train_smac.py \
+setsid env CUDA_LAUNCH_BLOCKING=1 python train/train_smac.py \
  --truelyDistributed True \
  --consensusLoss True \
  --gnn_loss_coef 1 \
@@ -21,6 +42,7 @@ CUDA_LAUNCH_BLOCKING=1 python train/train_smac.py \
  --map_name ${map} \
  --eval_map_name ${map} \
  --unit_sight_range ${unit_sight_range} \
+ --smac_worker_timeout 120 \
  --seed ${seed} \
  --n_training_threads 32 \
  --n_rollout_threads 32 \
@@ -48,10 +70,13 @@ CUDA_LAUNCH_BLOCKING=1 python train/train_smac.py \
  --use_eval \
  --use_wandb True \
  --wandb_name "xxx" \
- --user_name "shahil-shaik7-clemson-university"
+ --user_name "shahil-shaik7-clemson-university" &
+
+training_pid=$!
+wait "${training_pid}"
 
 # WANDB_MODE=offline
-# If smac fails, enter the command: pkill -f "SC2_x64 -listen"
+# SMAC worker failures are handled automatically by --smac_worker_timeout.
 # --truelyDistributed True
 # --gpu-freq=high,memory=high
 # --detach True
