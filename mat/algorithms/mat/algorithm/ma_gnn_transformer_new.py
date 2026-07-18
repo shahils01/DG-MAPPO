@@ -12,6 +12,7 @@ from mat.algorithms.utils.transformer_act import continuous_parallel_act
 from mat.algorithms.utils.variationalPolicyEncoder import PolicyVAE
 # from mat.algorithms.mat.algorithm.aero_gnn import AERO_GNN_Model as gnn
 from mat.algorithms.mat.algorithm.aero_gnn import GNN_Model as gnn
+from mat.algorithms.mat.algorithm.dg_mat import resolve_agent_devices
 # from mat.algorithms.mat.algorithm.aero_gnn import MeanGNN_Model as gnn
 # from mat.algorithms.mat.algorithm.aero_gnn import GATv2MultiHop as gat
 
@@ -31,6 +32,7 @@ class Encoder(nn.Module):
         self.n_agent = n_agent
         self.encode_state = encode_state
         self.use_centralized_critic = args.use_centralized_critic
+        self.output_device = torch.device(device)
 
         if args.iterations == 0:
             n_embd = 0
@@ -67,11 +69,14 @@ class Encoder(nn.Module):
             else:
                 x = obs[:, n, :]
 
-            x = x.unsqueeze(1)
+            owner = next(self.head_[n].parameters()).device
+            x = x.to(owner, non_blocking=True).unsqueeze(1)
             rep_n = x
-            v_loc_n = self.head_[n](rep_n[:,0,:])
+            v_loc_n = self.head_[n](rep_n[:,0,:]).to(
+                self.output_device, non_blocking=True
+            )
             v_loc.append(v_loc_n)
-            rep.append(rep_n)
+            rep.append(rep_n.to(self.output_device, non_blocking=True))
         v_loc = torch.stack(v_loc, dim=1)
         rep = torch.stack(rep, dim=1)
 
@@ -130,6 +135,7 @@ class Decoder(nn.Module):
         self.share_actor = share_actor
         self.action_type = action_type
         self.n_agent = n_agent
+        self.output_device = torch.device(device)
 
         if action_type != 'Discrete':
             log_std = torch.ones(action_dim)
@@ -167,8 +173,11 @@ class Decoder(nn.Module):
         logit = []
         for n in range(self.n_agent):
             x = obs[:, n, :]
-            x = x.unsqueeze(1)
-            logit_n = self.mlp_[n](x[:, 0, :])
+            owner = next(self.mlp_[n].parameters()).device
+            x = x.to(owner, non_blocking=True).unsqueeze(1)
+            logit_n = self.mlp_[n](x[:, 0, :]).to(
+                self.output_device, non_blocking=True
+            )
             logit.append(logit_n)
 
         logit = torch.stack(logit, dim=1)
@@ -201,6 +210,29 @@ class MultiAgentGnnTransformer(nn.Module):
         self._use_CNN_for_pi = args.use_CNN_for_pi
         self._use_VAE_for_pi = args.use_VAE_for_pi
         self.n_embd = n_embd
+        self.agent_parallel_enabled = bool(
+            getattr(args, "agent_parallel", False)
+            or getattr(args, "dg_mat_agent_parallel", False)
+        )
+        if self.agent_parallel_enabled and args.algorithm_name != "mappo_dgnn_dsgd":
+            raise ValueError(
+                "This GNN implementation supports agent parallelism only for "
+                "mappo_dgnn_dsgd."
+            )
+        device_spec = getattr(args, "agent_parallel_devices", None)
+        if device_spec is None:
+            device_spec = getattr(args, "dg_mat_devices", None)
+        self.agent_devices = resolve_agent_devices(
+            primary_device=device,
+            n_agent=n_agent,
+            enabled=self.agent_parallel_enabled,
+            device_spec=device_spec,
+        )
+        if self.agent_parallel_enabled and action_type != "Discrete":
+            raise ValueError(
+                "MAPPO-DGNN-DSGD agent parallelism currently supports "
+                "discrete action spaces only."
+            )
         
         # GNN
         self.obs_encoder = gnn(args, obs_dim, n_embd, n_embd, n_agent)
@@ -211,10 +243,75 @@ class MultiAgentGnnTransformer(nn.Module):
         self.decoder = Decoder(args, obs_dim, action_dim, n_block, n_embd, n_head, n_agent, device,
                                    self.action_type, dec_actor=dec_actor, share_actor=share_actor)
 
-        self.eye = torch.eye(self.n_agent, device="cuda:0").unsqueeze(0)
+        self.eye = torch.eye(self.n_agent, device=device).unsqueeze(0)
         self.eye = self.eye / torch.norm(self.eye, p='fro')  # Normalize entire matrix
             
         self.to(device)
+        self._place_agent_modules()
+
+    def _place_agent_modules(self):
+        for agent_id, owner in enumerate(self.agent_devices):
+            self.encoder.head_[agent_id].to(owner)
+            self.decoder.mlp_[agent_id].to(owner)
+        self.obs_encoder.configure_agent_parallel(
+            self.agent_devices, output_device=self.device
+        )
+
+    def agent_device(self, agent_id):
+        return self.agent_devices[agent_id]
+
+    def _prepare_model_input(self, value):
+        value = check(value)
+        if not isinstance(value, torch.Tensor):
+            value = torch.as_tensor(value)
+        if self.agent_parallel_enabled:
+            return value.to(dtype=torch.float32)
+        return value.to(**self.tpdv)
+
+    def agent_parameter_lists(self):
+        parameters = []
+        for agent_id in range(self.n_agent):
+            owned = []
+            owned.extend(self.decoder.mlp_[agent_id].parameters())
+            owned.extend(self.encoder.head_[agent_id].parameters())
+            owned.extend(self.obs_encoder.agent_encoders[agent_id].parameters())
+            owned.extend(
+                self.obs_encoder.node_classifier_heads[agent_id].parameters()
+            )
+            owned.extend(
+                self.obs_encoder.atts[hop][agent_id]
+                for hop in range(self.obs_encoder.K)
+            )
+            parameters.append(list(owned))
+        return parameters
+
+    @torch.no_grad()
+    def mix_agent_parameters(self, adjacency):
+        """Apply graph-neighbor D-SGD across persistent agent owner GPUs."""
+        adjacency = check(adjacency)
+        if not isinstance(adjacency, torch.Tensor):
+            adjacency = torch.as_tensor(adjacency)
+        adjacency = adjacency.detach().to(device="cpu", dtype=torch.float32)
+        if adjacency.dim() == 3:
+            adjacency = adjacency.mean(dim=0)
+        adjacency = adjacency.reshape(self.n_agent, self.n_agent).clone()
+        adjacency += torch.eye(self.n_agent, dtype=adjacency.dtype)
+        weights = adjacency / adjacency.sum(dim=1, keepdim=True).clamp_min(1.0)
+
+        parameter_lists = self.agent_parameter_lists()
+        for parameter_id in range(len(parameter_lists[0])):
+            current = [owned[parameter_id] for owned in parameter_lists]
+            snapshots = [parameter.detach().clone() for parameter in current]
+            for receiver_id, parameter in enumerate(current):
+                mixed = torch.zeros_like(parameter)
+                for sender_id, snapshot in enumerate(snapshots):
+                    weight = float(weights[receiver_id, sender_id])
+                    if weight:
+                        mixed.add_(
+                            snapshot.to(parameter.device, non_blocking=True),
+                            alpha=weight,
+                        )
+                parameter.copy_(mixed)
 
     def zero_std(self):
         if self.action_type != 'Discrete':
@@ -229,8 +326,8 @@ class MultiAgentGnnTransformer(nn.Module):
         # state unused
         # state = np.zeros((*ori_shape[:-1], 37), dtype=np.float32)
 
-        state = check(state).to(**self.tpdv)
-        obs = check(obs).to(**self.tpdv)
+        state = self._prepare_model_input(state)
+        obs = self._prepare_model_input(obs)
         action = check(action).to(**self.tpdv)
 
         if available_actions is not None:
@@ -253,8 +350,8 @@ class MultiAgentGnnTransformer(nn.Module):
         # state unused
         # state = np.zeros((*ori_shape[:-1], 37), dtype=np.float32)
 
-        state = check(state).to(**self.tpdv)
-        obs = check(obs).to(**self.tpdv)
+        state = self._prepare_model_input(state)
+        obs = self._prepare_model_input(obs)
         if available_actions is not None:
             available_actions = check(available_actions).to(**self.tpdv)
             
@@ -283,11 +380,8 @@ class MultiAgentGnnTransformer(nn.Module):
         # state unused
         # state = np.zeros((*ori_shape[:-1], 37), dtype=np.float32)
 
-        state = check(state).to(**self.tpdv)
-        obs = check(obs).to(**self.tpdv)
+        state = self._prepare_model_input(state)
+        obs = self._prepare_model_input(obs)
 
         v_tot, obs_rep = self.encoder(state, obs)
         return v_tot
-
-
-

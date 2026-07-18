@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import torch
 
-from mat.algorithms.mat.algorithm.dg_mat import DGMAT
+from mat.algorithms.mat.algorithm.dg_mat import DGMAT, resolve_agent_devices
 from mat.algorithms.mat.algorithm.transformer_policy import TransformerPolicy
 from mat.utils.shared_buffer import SharedReplayBuffer
 
@@ -191,6 +191,73 @@ class DGMATTest(unittest.TestCase):
         owned_parameters = set().union(*parameter_sets)
         model_parameters = {id(parameter) for parameter in policy.transformer.parameters()}
         self.assertEqual(owned_parameters, model_parameters)
+
+    def test_agent_devices_are_assigned_round_robin(self):
+        devices = resolve_agent_devices(
+            primary_device=torch.device("cuda:0"),
+            n_agent=5,
+            enabled=True,
+            device_spec="0,1",
+            cuda_device_count=2,
+        )
+        self.assertEqual(
+            devices,
+            [
+                torch.device("cuda:0"),
+                torch.device("cuda:1"),
+                torch.device("cuda:0"),
+                torch.device("cuda:1"),
+                torch.device("cuda:0"),
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "at least two CUDA devices"):
+            resolve_agent_devices(
+                primary_device=torch.device("cuda:0"),
+                n_agent=3,
+                enabled=True,
+                device_spec="0",
+                cuda_device_count=2,
+            )
+
+    def test_remote_messages_can_be_detached_for_owner_local_gradient(self):
+        messages = [
+            torch.randn(2, 16, requires_grad=True) for _ in range(3)
+        ]
+        context = self.model.actor_communication.forward_parts(
+            messages,
+            self.adjacency[:2],
+            detach_remote=True,
+        )[0]
+        context.sum().backward()
+
+        self.assertIsNotNone(messages[0].grad)
+        self.assertIsNone(messages[1].grad)
+        self.assertIsNone(messages[2].grad)
+
+    def test_cross_device_dsgd_mixing_matches_neighbor_average(self):
+        # The same mixing implementation is used on CPU and across CUDA owner
+        # devices, so its numerical behavior can be verified without NCCL.
+        for agent_id, head in enumerate(self.model.actor_heads):
+            for parameter in head.parameters():
+                parameter.data.fill_(float(agent_id + 1))
+
+        adjacency = torch.tensor(
+            [
+                [0.0, 1.0, 0.0],
+                [1.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0],
+            ]
+        )
+        self.model.mix_agent_parameters(adjacency)
+
+        expected = [1.5, 2.0, 2.5]
+        for agent_id, head in enumerate(self.model.actor_heads):
+            for parameter in head.parameters():
+                torch.testing.assert_close(
+                    parameter,
+                    torch.full_like(parameter, expected[agent_id]),
+                )
 
     def test_dg_mat_auto_buffer_storage_is_cpu(self):
         args = SimpleNamespace(

@@ -21,7 +21,7 @@ class SMACRunner(Runner):
     def __init__(self, config):
         super(SMACRunner, self).__init__(config)
 
-        self.eye = torch.eye(self.num_agents, device="cuda:0").unsqueeze(0)
+        self.eye = torch.eye(self.num_agents, device=self.device).unsqueeze(0)
         self.eye = self.eye / torch.norm(self.eye, p='fro')  # Normalize entire matrix
         self.disconnected_net = 0
         self._use_max_grad_norm = self.all_args.use_max_grad_norm
@@ -79,10 +79,10 @@ class SMACRunner(Runner):
             adjcency_matrix = None
             if self.algorithm_name in GRAPH_ALGORITHMS:
                 edge_index = self.envs.get_edge_index_matrix()
-                edge_index = torch.tensor(edge_index, dtype=torch.float32, device="cuda:0")
+                edge_index = torch.tensor(edge_index, dtype=torch.float32, device=self.device)
                 batch_edge_index = self.get_batch_edge_index(edge_index)
                 adjcency_matrix = self.envs.get_visibility_matrix()[:, :, :self.num_agents]
-                adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device="cuda:0")
+                adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device=self.device)
 
             for step in range(self.episode_length):
                 # Sample actions
@@ -98,19 +98,19 @@ class SMACRunner(Runner):
                 # Obser reward and next obs
                 obs, share_obs, rewards, dones, infos, available_actions = self.envs.step(actions.cpu().detach().numpy())
                 
-                obs = torch.tensor(obs, dtype=torch.float32, device="cuda:0")
-                share_obs = torch.tensor(share_obs, dtype=torch.float32, device="cuda:0")
-                rewards = torch.tensor(rewards, dtype=torch.float32, device="cuda:0")
-                dones = torch.tensor(dones, dtype=torch.float32, device="cuda:0")
-                available_actions = torch.tensor(available_actions, dtype=torch.float32, device="cuda:0")
+                obs = torch.tensor(obs, dtype=torch.float32, device=self.device)
+                share_obs = torch.tensor(share_obs, dtype=torch.float32, device=self.device)
+                rewards = torch.tensor(rewards, dtype=torch.float32, device=self.device)
+                dones = torch.tensor(dones, dtype=torch.float32, device=self.device)
+                available_actions = torch.tensor(available_actions, dtype=torch.float32, device=self.device)
 
                 if self.algorithm_name in GRAPH_ALGORITHMS and self.algorithm_name != "dg_mat":
                     edge_index = self.envs.get_edge_index_matrix()
-                    edge_index = torch.tensor(edge_index, dtype=torch.float32, device="cuda:0")
+                    edge_index = torch.tensor(edge_index, dtype=torch.float32, device=self.device)
                     batch_edge_index = self.get_batch_edge_index(edge_index)
 
                     adjcency_matrix = self.envs.get_visibility_matrix()[:,:,:self.num_agents]
-                    adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device="cuda:0")
+                    adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device=self.device)
                                                 
                 data = obs, share_obs, rewards, dones, infos, available_actions, \
                        values, actions, action_log_probs, \
@@ -125,11 +125,11 @@ class SMACRunner(Runner):
                 # indices aligned.
                 if self.algorithm_name == "dg_mat":
                     edge_index = self.envs.get_edge_index_matrix()
-                    edge_index = torch.tensor(edge_index, dtype=torch.float32, device="cuda:0")
+                    edge_index = torch.tensor(edge_index, dtype=torch.float32, device=self.device)
                     batch_edge_index = self.get_batch_edge_index(edge_index)
                     adjcency_matrix = self.envs.get_visibility_matrix()[:, :, :self.num_agents]
                     adjcency_matrix = torch.tensor(
-                        adjcency_matrix, dtype=torch.float32, device="cuda:0"
+                        adjcency_matrix, dtype=torch.float32, device=self.device
                     )
 
             # compute return and update network
@@ -194,31 +194,39 @@ class SMACRunner(Runner):
     def warmup(self):
         # reset env
         obs, share_obs, available_actions = self.envs.reset()
-        share_obs = torch.tensor(share_obs, dtype=torch.float32, device="cuda:0")
-        available_actions = torch.tensor(available_actions, dtype=torch.float32, device="cuda:0")
-        obs = torch.tensor(obs, dtype=torch.float32, device="cuda:0")
+        share_obs = torch.tensor(share_obs, dtype=torch.float32, device=self.device)
+        available_actions = torch.tensor(available_actions, dtype=torch.float32, device=self.device)
+        obs = torch.tensor(obs, dtype=torch.float32, device=self.device)
     
         if self.algorithm_name == "consensus_ippo":
             adjcency_matrix = self.envs.get_visibility_matrix()[:,:,:self.num_agents]
-            adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device="cuda:0")
+            adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device=self.device)
             self.buffer.copy_into(
                 self.buffer.adjcency_matrix[0], adjcency_matrix
             )
 
         if self.all_args.iterations > 0:
             if self.algorithm_name in GNN_ALGORITHMS:
-                self.buffer.obs = torch.zeros((self.episode_length + 1, self.n_rollout_threads, self.num_agents, self.obs_dim+self.n_embd), dtype=torch.float32, device='cuda:0')
+                self.buffer.obs = self.buffer._zeros(
+                    self.episode_length + 1,
+                    self.n_rollout_threads,
+                    self.num_agents,
+                    self.obs_dim + self.n_embd,
+                )
 
                 print('obs shape = ', obs.shape)
 
                 adjcency_matrix = self.envs.get_visibility_matrix()[:,:,:self.num_agents]
-                adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device="cuda:0")
+                adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device=self.device)
                 
                 edge_index = self.envs.get_edge_index_matrix()
-                edge_index = torch.tensor(edge_index, dtype=torch.float32, device="cuda:0")
+                edge_index = torch.tensor(edge_index, dtype=torch.float32, device=self.device)
                 batch_edge_index = self.get_batch_edge_index(edge_index)
                 
-                x = self.trainer.policy.transformer.obs_encoder(obs, batch_edge_index)
+                with torch.no_grad():
+                    x = self.trainer.policy.transformer.obs_encoder(
+                        obs, batch_edge_index
+                    )
 
                 obs = torch.cat([obs,x],dim=-1).detach()
 
@@ -267,20 +275,23 @@ class SMACRunner(Runner):
         
         if self.all_args.iterations > 0:
             if self.algorithm_name in GNN_ALGORITHMS:
-                x = self.trainer.policy.transformer.obs_encoder(obs, batched_edge_index)
+                with torch.no_grad():
+                    x = self.trainer.policy.transformer.obs_encoder(
+                        obs, batched_edge_index
+                    )
                 obs = torch.cat([obs,x],dim=-1).detach()
 
         dones_env = torch.all(dones, dim=1)
 
-        rnn_states[dones_env == True] = torch.zeros(((dones_env == True).sum(), self.num_agents, self.n_embd), dtype=torch.float32, device="cuda:0")
-        rnn_states_critic[dones_env == True] = torch.zeros(((dones_env == True).sum(), self.num_agents, self.n_embd), dtype=torch.float32, device="cuda:0")
+        rnn_states[dones_env == True] = torch.zeros(((dones_env == True).sum(), self.num_agents, self.n_embd), dtype=torch.float32, device=self.device)
+        rnn_states_critic[dones_env == True] = torch.zeros(((dones_env == True).sum(), self.num_agents, self.n_embd), dtype=torch.float32, device=self.device)
 
-        masks = torch.ones((self.n_rollout_threads, self.num_agents, 1), dtype=torch.float32, device="cuda:0")
-        masks[dones_env == True] = torch.zeros(((dones_env == True).sum(), self.num_agents, 1), dtype=torch.float32, device="cuda:0")
+        masks = torch.ones((self.n_rollout_threads, self.num_agents, 1), dtype=torch.float32, device=self.device)
+        masks[dones_env == True] = torch.zeros(((dones_env == True).sum(), self.num_agents, 1), dtype=torch.float32, device=self.device)
 
-        active_masks = torch.ones((self.n_rollout_threads, self.num_agents, 1), dtype=torch.float32, device="cuda:0")
-        active_masks[dones == True] = torch.zeros(((dones == True).sum(), 1), dtype=torch.float32, device="cuda:0")
-        active_masks[dones_env == True] = torch.ones(((dones_env == True).sum(), self.num_agents, 1), dtype=torch.float32, device="cuda:0")
+        active_masks = torch.ones((self.n_rollout_threads, self.num_agents, 1), dtype=torch.float32, device=self.device)
+        active_masks[dones == True] = torch.zeros(((dones == True).sum(), 1), dtype=torch.float32, device=self.device)
+        active_masks[dones_env == True] = torch.ones(((dones_env == True).sum(), self.num_agents, 1), dtype=torch.float32, device=self.device)
 
         bad_masks = torch.tensor(
             [
@@ -291,7 +302,7 @@ class SMACRunner(Runner):
                 for info in infos
             ],
             dtype=torch.float32,
-            device="cuda:0"  # Optional: specify device if needed (e.g., 'cuda' or 'cpu')
+            device=self.device
         )        
 
         if not self.use_centralized_V:
@@ -323,18 +334,18 @@ class SMACRunner(Runner):
         one_episode_rewards = []
 
         eval_obs, eval_share_obs, eval_available_actions = self.eval_envs.reset()
-        eval_obs = torch.tensor(eval_obs, dtype=torch.float32, device="cuda:0")
-        eval_share_obs = torch.tensor(eval_share_obs, dtype=torch.float32, device="cuda:0")
-        eval_available_actions = torch.tensor(eval_available_actions, dtype=torch.float32, device="cuda:0")
+        eval_obs = torch.tensor(eval_obs, dtype=torch.float32, device=self.device)
+        eval_share_obs = torch.tensor(eval_share_obs, dtype=torch.float32, device=self.device)
+        eval_available_actions = torch.tensor(eval_available_actions, dtype=torch.float32, device=self.device)
 
-        eval_rnn_states = torch.zeros((self.n_eval_rollout_threads, self.num_agents, self.recurrent_N, self.n_embd), dtype=torch.float32, device="cuda:0")
-        eval_masks = torch.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=torch.float32, device="cuda:0")
+        eval_rnn_states = torch.zeros((self.n_eval_rollout_threads, self.num_agents, self.recurrent_N, self.n_embd), dtype=torch.float32, device=self.device)
+        eval_masks = torch.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=torch.float32, device=self.device)
 
         while True:
             if self.all_args.iterations > 0:
                 if self.algorithm_name in GNN_ALGORITHMS:
                     edge_index = self.eval_envs.get_edge_index_matrix()
-                    edge_index = torch.tensor(edge_index, dtype=torch.float32, device="cuda:0")
+                    edge_index = torch.tensor(edge_index, dtype=torch.float32, device=self.device)
                     batch_edge_index = self.get_batch_edge_index(edge_index)
 
                     avg_node_degree = batch_edge_index.shape[1]/self.num_agents
@@ -347,7 +358,7 @@ class SMACRunner(Runner):
             if self.algorithm_name == "dg_mat":
                 adjcency_matrix = self.eval_envs.get_visibility_matrix()[:, :, :self.num_agents]
                 adjcency_matrix = torch.tensor(
-                    adjcency_matrix, dtype=torch.float32, device="cuda:0"
+                    adjcency_matrix, dtype=torch.float32, device=self.device
                 )
             
             self.trainer.prep_rollout()
@@ -370,17 +381,17 @@ class SMACRunner(Runner):
             # by converting actions to a regular CPU NumPy array first.
             eval_actions_env = _t2n(eval_actions)
             eval_obs, eval_share_obs, eval_rewards, eval_dones, eval_infos, eval_available_actions = self.eval_envs.step(eval_actions_env)
-            eval_obs = torch.tensor(eval_obs, dtype=torch.float32, device="cuda:0")
-            eval_share_obs = torch.tensor(eval_share_obs, dtype=torch.float32, device="cuda:0")
-            eval_dones = torch.tensor(eval_dones, dtype=torch.float32, device="cuda:0")
-            eval_available_actions = torch.tensor(eval_available_actions, dtype=torch.float32, device="cuda:0")
+            eval_obs = torch.tensor(eval_obs, dtype=torch.float32, device=self.device)
+            eval_share_obs = torch.tensor(eval_share_obs, dtype=torch.float32, device=self.device)
+            eval_dones = torch.tensor(eval_dones, dtype=torch.float32, device=self.device)
+            eval_available_actions = torch.tensor(eval_available_actions, dtype=torch.float32, device=self.device)
 
             one_episode_rewards.append(eval_rewards)
             eval_dones_env = torch.all(eval_dones, dim=1)
-            eval_rnn_states[eval_dones_env == True] = torch.zeros(((eval_dones_env == True).sum(), self.num_agents, self.n_embd), dtype=torch.float32, device="cuda:0")
+            eval_rnn_states[eval_dones_env == True] = torch.zeros(((eval_dones_env == True).sum(), self.num_agents, self.n_embd), dtype=torch.float32, device=self.device)
 
-            eval_masks = torch.ones((self.all_args.n_eval_rollout_threads, self.num_agents, 1), dtype=torch.float32, device="cuda:0")
-            eval_masks[eval_dones_env == True] = torch.zeros(((eval_dones_env == True).sum(), self.num_agents, 1), dtype=torch.float32, device="cuda:0")
+            eval_masks = torch.ones((self.all_args.n_eval_rollout_threads, self.num_agents, 1), dtype=torch.float32, device=self.device)
+            eval_masks[eval_dones_env == True] = torch.zeros(((eval_dones_env == True).sum(), self.num_agents, 1), dtype=torch.float32, device=self.device)
 
             for eval_i in range(self.n_eval_rollout_threads):
                 if eval_dones_env[eval_i]:

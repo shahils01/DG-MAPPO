@@ -100,6 +100,53 @@ DG-MAT uses CPU rollout-buffer storage by default when `--buffer_device auto`
 to CUDA. Pass `--buffer_device cpu` explicitly in cluster scripts to make this
 choice visible in logged configurations.
 
+#### Agent-parallel DG-MAT
+
+DG-MAT can persistently assign complete agent models to different GPUs. Local
+observation attention, receiver communication, actor/critic heads, optimizer
+state, and their attention activations stay on the owning GPU. Compact detached
+peer messages, output/context tensors, and the tensors needed for graph-neighbor
+D-SGD parameter mixing move between GPUs.
+
+Request two or more GPUs and add:
+
+```bash
+python mat/scripts/train/train_smac.py \
+  --algorithm_name dg_mat \
+  --agent_parallel \
+  --agent_parallel_devices 0,1 \
+  --buffer_device cpu \
+  ...
+```
+
+CUDA indices are logical indices after `CUDA_VISIBLE_DEVICES` is applied. If
+`--agent_parallel_devices` is omitted, all visible GPUs are used and agents are assigned
+round-robin. This implementation uses one Python process, so launch it with
+ordinary `python`/`srun python`, not `torchrun`. Check the startup line
+`[agent parallel] agent owners=...` to verify placement. Checkpoints are saved on CPU
+and can be restored with a different number or arrangement of GPUs.
+
+The ready-to-edit SLURM example is
+`mat/scripts/train_dg_mat_agent_parallel.slurm`.
+
+The same ownership model is available for `mappo_dgnn_dsgd`:
+
+```bash
+python mat/scripts/train/train_smac.py \
+  --algorithm_name mappo_dgnn_dsgd \
+  --agent_parallel \
+  --agent_parallel_devices 0,1 \
+  --buffer_device cpu \
+  ...
+```
+
+For MAPPO-DGNN-DSGD, every agent's actor, critic, local GNN encoder, GNN
+classifier, attention vectors, and optimizer state live on its owner GPU. The
+existing rollout-time graph propagation remains on the primary GPU and uses
+transient attention-vector copies; its encoded output is still detached before
+buffer insertion, preserving the baseline algorithm's training semantics. See
+`mat/scripts/train_mappo_dgnn_dsgd_agent_parallel.slurm` for a complete launch.
+
 
 ## Multi-Agent Sequential Decision Paradigm
 

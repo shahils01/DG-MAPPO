@@ -122,7 +122,7 @@ class MATTrainer:
 
 
     def gnn_consensus_loss(self, x, edge_index):
-        total_consensus_loss = torch.zeros(self.num_agents, dtype=torch.float32, device="cuda:0")
+        total_consensus_loss = torch.zeros(self.num_agents, dtype=torch.float32, device=self.device)
                 
         for i in range(self.num_agents):
             # Create mask for valid edges (where edge_index[:, 1, :] != -1)
@@ -257,12 +257,12 @@ class MATTrainer:
         adv_targ, available_actions_batch, adjcency_matrix_batch, next_obs_batch, edge_index_batch = sample
 
         # Convert all inputs to proper device and dtype
-        def ensure_tensor(x):
+        def ensure_tensor(x, target_device=None):
             if isinstance(x, np.ndarray):
                 x = torch.from_numpy(x)
             if isinstance(x, torch.Tensor):
                 return x.to(
-                    device=self.device,
+                    device=self.device if target_device is None else target_device,
                     dtype=torch.float32,
                     non_blocking=True,
                 )
@@ -273,7 +273,14 @@ class MATTrainer:
         value_preds_batch = ensure_tensor(value_preds_batch)
         return_batch = ensure_tensor(return_batch)
         active_masks_batch = ensure_tensor(active_masks_batch)
-        obs_batch = ensure_tensor(obs_batch)
+        agent_parallel = (
+            self.policy.algorithm_name == "dg_mat"
+            and self.policy.transformer.agent_parallel_enabled
+        )
+        obs_batch = ensure_tensor(
+            obs_batch,
+            target_device=torch.device("cpu") if agent_parallel else self.device,
+        )
         actions_batch = ensure_tensor(actions_batch)
 
         # DG-MAT ignores centralized observations, RNN state, next_obs, and
@@ -432,46 +439,54 @@ class MATTrainer:
 
         for _ in range(1):
             if self.policy.algorithm_name == 'mappo_dgnn_dsgd':
-                average_agent_encoders_by_adj(self.policy.transformer.obs_encoder.agent_encoders, adjcency_matrix_batch[0])
-                average_agent_encoders_by_adj(self.policy.transformer.obs_encoder.node_classifier_heads, adjcency_matrix_batch[0])
-                average_attention_params_by_adj(self.policy.transformer.obs_encoder.atts, adjcency_matrix_batch[0])
+                if self.policy.transformer.agent_parallel_enabled:
+                    self.policy.transformer.mix_agent_parameters(
+                        adjcency_matrix_batch[0]
+                    )
+                else:
+                    average_agent_encoders_by_adj(self.policy.transformer.obs_encoder.agent_encoders, adjcency_matrix_batch[0])
+                    average_agent_encoders_by_adj(self.policy.transformer.obs_encoder.node_classifier_heads, adjcency_matrix_batch[0])
+                    average_attention_params_by_adj(self.policy.transformer.obs_encoder.atts, adjcency_matrix_batch[0])
 
-                # average_attention_params_by_adj(self.policy.transformer.obs_encoder.hop_atts, adjcency_matrix_batch[0])
-                # average_attention_params_by_adj(self.policy.transformer.obs_encoder.hop_biases, adjcency_matrix_batch[0])
-                average_agent_encoders_by_adj(self.policy.transformer.encoder.head_, adjcency_matrix_batch[0])
-                average_agent_encoders_by_adj(self.policy.transformer.decoder.mlp_, adjcency_matrix_batch[0])
+                    # average_attention_params_by_adj(self.policy.transformer.obs_encoder.hop_atts, adjcency_matrix_batch[0])
+                    # average_attention_params_by_adj(self.policy.transformer.obs_encoder.hop_biases, adjcency_matrix_batch[0])
+                    average_agent_encoders_by_adj(self.policy.transformer.encoder.head_, adjcency_matrix_batch[0])
+                    average_agent_encoders_by_adj(self.policy.transformer.decoder.mlp_, adjcency_matrix_batch[0])
 
             elif self.policy.algorithm_name == "dg_mat":
                 mixing_adjacency = adjcency_matrix_batch.float().mean(dim=0)
-                average_agent_encoders_by_adj(
-                    self.policy.transformer.actor_local_encoder.agent_encoders,
-                    mixing_adjacency,
-                )
-                average_agent_encoders_by_adj(
-                    self.policy.transformer.critic_local_encoder.agent_encoders,
-                    mixing_adjacency,
-                )
-                average_agent_encoders_by_adj(
-                    self.policy.transformer.actor_communication.agent_blocks,
-                    mixing_adjacency,
-                )
-                average_agent_encoders_by_adj(
-                    self.policy.transformer.critic_communication.agent_blocks,
-                    mixing_adjacency,
-                )
-                average_agent_encoders_by_adj(
-                    self.policy.transformer.actor_heads,
-                    mixing_adjacency,
-                )
-                average_agent_encoders_by_adj(
-                    self.policy.transformer.critic_heads,
-                    mixing_adjacency,
-                )
-                if self.policy.action_type != "Discrete":
+                if self.policy.transformer.agent_parallel_enabled:
+                    self.policy.transformer.mix_agent_parameters(mixing_adjacency)
+                else:
                     average_agent_encoders_by_adj(
-                        self.policy.transformer.log_std,
+                        self.policy.transformer.actor_local_encoder.agent_encoders,
                         mixing_adjacency,
                     )
+                    average_agent_encoders_by_adj(
+                        self.policy.transformer.critic_local_encoder.agent_encoders,
+                        mixing_adjacency,
+                    )
+                    average_agent_encoders_by_adj(
+                        self.policy.transformer.actor_communication.agent_blocks,
+                        mixing_adjacency,
+                    )
+                    average_agent_encoders_by_adj(
+                        self.policy.transformer.critic_communication.agent_blocks,
+                        mixing_adjacency,
+                    )
+                    average_agent_encoders_by_adj(
+                        self.policy.transformer.actor_heads,
+                        mixing_adjacency,
+                    )
+                    average_agent_encoders_by_adj(
+                        self.policy.transformer.critic_heads,
+                        mixing_adjacency,
+                    )
+                    if self.policy.action_type != "Discrete":
+                        average_agent_encoders_by_adj(
+                            self.policy.transformer.log_std,
+                            mixing_adjacency,
+                        )
 
 
         # Return average losses across agents

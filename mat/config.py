@@ -323,6 +323,38 @@ def get_config():
                         help="DG-MAT attention feed-forward expansion multiplier")
     parser.add_argument("--dg_mat_obs_tokens", type=int, default=8,
                         help="number of contiguous feature tokens used by each DG-MAT local observation self-attention encoder")
+    parser.add_argument(
+        "--agent_parallel",
+        action="store_true",
+        default=False,
+        help=(
+            "place complete per-agent modules round-robin across multiple GPUs "
+            "for dg_mat or mappo_dgnn_dsgd"
+        ),
+    )
+    parser.add_argument(
+        "--agent_parallel_devices",
+        type=str,
+        default=None,
+        help=(
+            "comma-separated logical CUDA devices for agent parallelism "
+            "(for example 0,1); defaults to every visible GPU"
+        ),
+    )
+    parser.add_argument(
+        "--dg_mat_agent_parallel",
+        action="store_true",
+        default=False,
+        help="legacy alias for --agent_parallel",
+    )
+    parser.add_argument(
+        "--dg_mat_devices",
+        type=str,
+        default=None,
+        help=(
+            "legacy alias for --agent_parallel_devices"
+        ),
+    )
 
     # add for online multi-task
     parser.add_argument("--train_maps", type=str, nargs='+', default=None)

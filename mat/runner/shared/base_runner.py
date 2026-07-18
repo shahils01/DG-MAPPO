@@ -107,7 +107,11 @@ class Runner(object):
                                         self.envs.observation_space[0],
                                         share_observation_space,
                                         self.envs.action_space[0],
-                                         self.all_args.env_name)
+                                         self.all_args.env_name,
+                                         training_device=self.device)
+        if getattr(self.policy.transformer, "agent_parallel_enabled", False):
+            owners = [str(device) for device in self.policy.transformer.agent_devices]
+            print(f"[agent parallel] agent owners={owners}")
         print(
             "[rollout buffer] "
             f"storage={self.buffer.storage_device}, "

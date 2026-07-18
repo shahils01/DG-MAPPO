@@ -29,7 +29,7 @@ class SharedReplayBuffer(object):
     :param act_space: (gym.Space) action space for agents.
     """
 
-    def __init__(self, args, num_agents, obs_space, cent_obs_space, act_space, env_name, use_value_entropy=True):
+    def __init__(self, args, num_agents, obs_space, cent_obs_space, act_space, env_name, use_value_entropy=True, training_device=None):
         self.episode_length = args.episode_length
         self.n_rollout_threads = args.n_rollout_threads
         self.n_embd = args.n_embd
@@ -37,7 +37,11 @@ class SharedReplayBuffer(object):
         requested_buffer_device = getattr(args, "buffer_device", "auto")
         if requested_buffer_device == "auto":
             requested_buffer_device = (
-                "cpu" if args.algorithm_name == "dg_mat" else "cuda"
+                "cpu"
+                if args.algorithm_name == "dg_mat"
+                or getattr(args, "agent_parallel", False)
+                or getattr(args, "dg_mat_agent_parallel", False)
+                else "cuda"
             )
         if requested_buffer_device == "cuda" and not torch.cuda.is_available():
             raise RuntimeError(
@@ -45,8 +49,11 @@ class SharedReplayBuffer(object):
                 "Use --buffer_device cpu."
             )
 
+        cuda_storage_device = torch.device(training_device or "cuda:0")
+        if cuda_storage_device.type != "cuda":
+            cuda_storage_device = torch.device("cuda:0")
         self.storage_device = torch.device(
-            "cuda:0" if requested_buffer_device == "cuda" else "cpu"
+            cuda_storage_device if requested_buffer_device == "cuda" else "cpu"
         )
         self.pin_memory = (
             self.storage_device.type == "cpu"

@@ -19,6 +19,7 @@ from mat.envs.starcraft2.smac_maps import get_map_params
 # from mat.runner.shared.smac_runner import SMACRunner
 from mat.runner.shared.smac_runner_new import SMACRunner
 from mat.runner.shared.dgn_runner import DGNRunner
+from mat.algorithms.mat.algorithm.dg_mat import resolve_agent_devices
 
 yaml_path = os.path.join(os.path.expanduser("~"), "Desktop", "marl_ws", 
                         "Multi-Agent-Transformer", "mat", "envs", "smacv2",
@@ -126,6 +127,14 @@ def main(args):
     parser = get_config()
     all_args = parse_args(args, parser)
 
+    # Keep the original DG-MAT flags as backward-compatible aliases while the
+    # generic names also cover MAPPO-DGNN-DSGD.
+    all_args.agent_parallel = bool(
+        all_args.agent_parallel or all_args.dg_mat_agent_parallel
+    )
+    if all_args.agent_parallel_devices is None:
+        all_args.agent_parallel_devices = all_args.dg_mat_devices
+
     if all_args.algorithm_name == "mat_dec":
         all_args.dec_actor = True
         all_args.share_actor = True
@@ -139,6 +148,16 @@ def main(args):
         all_args.dec_actor = False
         all_args.share_actor = False
         all_args.share_policy = False
+        all_args.truelyDistributed = True
+
+    if all_args.agent_parallel and all_args.algorithm_name not in {
+        "dg_mat",
+        "mappo_dgnn_dsgd",
+    }:
+        parser.error(
+            "--agent_parallel is supported only with dg_mat or mappo_dgnn_dsgd"
+        )
+    if all_args.agent_parallel:
         all_args.truelyDistributed = True
 
     if all_args.algorithm_name == "mat_gnn":
@@ -163,12 +182,39 @@ def main(args):
     # cuda
     if all_args.cuda and torch.cuda.is_available():
         print("choose to use gpu...")
-        device = torch.device("cuda:0")
+        primary_cuda_index = 0
+        if all_args.agent_parallel and all_args.agent_parallel_devices:
+            first_device = all_args.agent_parallel_devices.split(",", 1)[0].strip()
+            if first_device.startswith("cuda:"):
+                first_device = first_device.split(":", 1)[1]
+            try:
+                primary_cuda_index = int(first_device)
+            except ValueError:
+                parser.error(
+                    "--agent_parallel_devices must contain CUDA indices such as 0,1 "
+                    "or cuda:0,cuda:1"
+                )
+            if primary_cuda_index < 0:
+                parser.error("--agent_parallel_devices CUDA indices must be non-negative")
+        device = torch.device(f"cuda:{primary_cuda_index}")
+        if all_args.agent_parallel:
+            try:
+                resolve_agent_devices(
+                    primary_device=device,
+                    n_agent=1,
+                    enabled=True,
+                    device_spec=all_args.agent_parallel_devices,
+                )
+            except ValueError as error:
+                parser.error(str(error))
+        torch.cuda.set_device(device)
         torch.set_num_threads(all_args.n_training_threads)
         if all_args.cuda_deterministic:
             torch.backends.cudnn.benchmark = False
             torch.backends.cudnn.deterministic = True
     else:
+        if all_args.agent_parallel:
+            parser.error("--agent_parallel requires CUDA and at least two visible GPUs")
         print("choose to use cpu...")
         device = torch.device("cpu")
         #torch.set_num_threads(all_args.n_training_threads)

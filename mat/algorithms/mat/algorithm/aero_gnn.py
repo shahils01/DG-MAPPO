@@ -265,9 +265,28 @@ class GNN_Model(MessagePassing):
         self.hid_channels = hid_channels
         self.hid_channels_ = self.heads * self.hid_channels
         self.K = self.args.iterations
+        self.agent_parallel_enabled = False
+        self.agent_devices = [torch.device("cpu")] * num_agents
+        self.output_device = torch.device("cpu")
                 
         self.setup_layers()
         self.reset_parameters()
+
+    def configure_agent_parallel(self, agent_devices, output_device):
+        """Persistently place per-agent GNN parameters on their owner devices."""
+        self.agent_devices = [torch.device(device) for device in agent_devices]
+        self.output_device = torch.device(output_device)
+        self.agent_parallel_enabled = len(set(self.agent_devices)) > 1
+
+        for agent_id, owner in enumerate(self.agent_devices):
+            self.agent_encoders[agent_id].to(owner)
+            self.node_classifier_heads[agent_id].to(owner)
+            if self.args.algorithm_name in {"mappo_dgnn", "mappo_dgnn_dsgd"}:
+                for hop in range(self.K):
+                    parameter = self.atts[hop][agent_id]
+                    self.atts[hop][agent_id] = nn.Parameter(
+                        parameter.detach().to(owner)
+                    )
 
     def setup_layers(self):
         self.dropout = nn.Dropout(self.args.dropout)
@@ -351,9 +370,12 @@ class GNN_Model(MessagePassing):
         x = self.dropout(x)
         h_list = []
         for agent_id in range(self.num_nodes):
-            x_i = x[:, agent_id, :]  # shape: (batch_size, in_channels)
+            owner = next(self.agent_encoders[agent_id].parameters()).device
+            x_i = x[:, agent_id, :].to(owner, non_blocking=True)
             x_i = self.agent_encoders[agent_id](x_i)  # (batch_size, hid_channels_)
-            h_list.append(x_i.unsqueeze(1))
+            h_list.append(
+                x_i.to(self.output_device, non_blocking=True).unsqueeze(1)
+            )
         x = torch.cat(h_list, dim=1)  # (batch_size, num_agents, hid_channels_)
         
         # Reshape to (batch_size, num_agents, heads, hid_channels)
@@ -416,7 +438,10 @@ class GNN_Model(MessagePassing):
             z_i = self.elu(z_i)
             if self.args.add_dropout:
                 z_i = self.dropout(z_i)
-            z_i = self.node_classifier_heads[agent_id](z_i)
+            owner = next(self.node_classifier_heads[agent_id].parameters()).device
+            z_i = self.node_classifier_heads[agent_id](
+                z_i.to(owner, non_blocking=True)
+            ).to(self.output_device, non_blocking=True)
 
             if torch.isnan(z_i).any():
                 print("Warning: NaNs in node_classifier output")
@@ -450,7 +475,16 @@ class GNN_Model(MessagePassing):
         # att_vec = self.atts[self.k-1][agent_indices]
 
         if self.args.algorithm_name == 'mappo_dgnn' or self.args.algorithm_name == 'mappo_dgnn_dsgd':
-            att_vec = torch.stack([self.atts[self.k-1][i] for i in agent_indices.tolist()], dim=0)
+            attention_bank = torch.stack(
+                [
+                    self.atts[self.k - 1][i].to(
+                        a_ij.device, non_blocking=True
+                    )
+                    for i in range(self.num_nodes)
+                ],
+                dim=0,
+            )
+            att_vec = attention_bank[agent_indices]
         else:
             # att_vec = torch.stack([self.atts[self.k-1][0] for i in agent_indices.tolist()], dim=0)
             x = self.atts[self.k-1][0]   # shape: [d1, d2, ...]

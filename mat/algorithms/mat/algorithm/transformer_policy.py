@@ -113,13 +113,7 @@ class TransformerPolicy:
             elif self.algorithm_name == "mappo_dgnn" or self.algorithm_name == "mappo_dgnn_dsgd":
                 self.optimizers = [
                     torch.optim.Adam(
-                        list(self.transformer.decoder.mlp_[i].parameters()) +
-                        list(self.transformer.encoder.head_[i].parameters()) +
-                        list(self.transformer.obs_encoder.agent_encoders[i].parameters()) +
-                        list(self.transformer.obs_encoder.node_classifier_heads[i].parameters()) +
-                        [self.transformer.obs_encoder.atts[k][i] for k in range(self.transformer.obs_encoder.K)],
-                        # [self.transformer.obs_encoder.hop_atts[k][i] for k in range(self.transformer.obs_encoder.K)] +
-                        # [self.transformer.obs_encoder.hop_biases[k][i] for k in range(self.transformer.obs_encoder.K)],
+                        self.agent_parameters(i),
                         lr=self.lr,
                         eps=self.opti_eps,
                         weight_decay=self.weight_decay,
@@ -180,6 +174,9 @@ class TransformerPolicy:
             if self.action_type != "Discrete":
                 params.extend(self.transformer.log_std[agent_idx].parameters())
             return list(params)
+
+        if self.algorithm_name in {"mappo_dgnn", "mappo_dgnn_dsgd"}:
+            return self.transformer.agent_parameter_lists()[agent_idx]
 
         params = []
         
@@ -396,7 +393,13 @@ class TransformerPolicy:
         return actions, rnn_states_actor
 
     def save(self, save_dir, episode):
-        torch.save(self.transformer.state_dict(), str(save_dir) + "/transformer_" + str(episode) + ".pt")
+        # Multi-device state dicts are normalized to CPU so checkpoints remain
+        # portable across different GPU counts and CUDA_VISIBLE_DEVICES layouts.
+        state_dict = {
+            key: value.detach().cpu()
+            for key, value in self.transformer.state_dict().items()
+        }
+        torch.save(state_dict, str(save_dir) + "/transformer_" + str(episode) + ".pt")
 
     def _infer_checkpoint_agent_count(self, state_dict):
         max_idx = -1
@@ -502,7 +505,9 @@ class TransformerPolicy:
                         )
 
     def restore(self, model_dir, allow_partial=False):
-        transformer_state_dict = torch.load(model_dir, weights_only=True)
+        transformer_state_dict = torch.load(
+            model_dir, map_location="cpu", weights_only=True
+        )
 
         if not allow_partial:
             self.transformer.load_state_dict(transformer_state_dict)
