@@ -94,6 +94,27 @@ def parse_args(args, parser):
     parser.add_argument('--eval_map_name', type=str, default='3m', help="Which smac map to eval on")
     parser.add_argument('--unit_sight_range', type=float, default=4.0,
                         help="Sight range used for allied and enemy unit observations")
+    enemy_info_group = parser.add_mutually_exclusive_group()
+    enemy_info_group.add_argument(
+        "--share_enemy_info_with_neighbors",
+        dest="share_enemy_info_with_neighbors",
+        action="store_true",
+        help=(
+            "include enemies seen by direct communication neighbors in each "
+            "agent observation (default)"
+        ),
+    )
+    enemy_info_group.add_argument(
+        "--disable_enemy_info_sharing",
+        "--no_share_enemy_info_with_neighbors",
+        dest="share_enemy_info_with_neighbors",
+        action="store_false",
+        help=(
+            "restrict enemy features to enemies directly inside the observing "
+            "agent's sight range"
+        ),
+    )
+    parser.set_defaults(share_enemy_info_with_neighbors=True)
     parser.add_argument('--run_dir', type=str, default='', help="Which smac map to eval on")
     parser.add_argument("--add_move_state", action='store_true', default=False)
     parser.add_argument("--add_local_obs", action='store_true', default=False)
@@ -126,6 +147,10 @@ def parse_args(args, parser):
 def main(args):
     parser = get_config()
     all_args = parse_args(args, parser)
+    print(
+        "SMAC neighbor enemy-info sharing: "
+        f"{'enabled' if all_args.share_enemy_info_with_neighbors else 'disabled'}"
+    )
 
     # Keep the original DG-MAT flags as backward-compatible aliases while the
     # generic names also cover MAPPO-DGNN-DSGD.

@@ -215,6 +215,9 @@ class StarCraft2Env(MultiAgentEnv):
         self.use_stacked_frames = args.use_stacked_frames
         self.stacked_frames = args.stacked_frames
         self._unit_sight_range = args.unit_sight_range
+        self.share_enemy_info_with_neighbors = getattr(
+            args, "share_enemy_info_with_neighbors", True
+        )
         
         map_params = get_map_params(self.map_name)
         self.n_agents = map_params["n_agents"]
@@ -1083,8 +1086,9 @@ class StarCraft2Env(MultiAgentEnv):
                 move_feats[ind:] = self.get_surrounding_height(unit)
 
             communication_matrix = self.get_agent_communication_matrix()
-            communicating_agent_ids = np.where(communication_matrix[agent_id])[0]
-            observing_agent_ids = [agent_id] + communicating_agent_ids.tolist()
+            observing_agent_ids = self.get_enemy_observer_ids(
+                agent_id, communication_matrix
+            )
 
             # Enemy features
             for e_id, e_unit in self.enemies.items():
@@ -1827,6 +1831,14 @@ class StarCraft2Env(MultiAgentEnv):
         dist = self.distance(agent.pos.x, agent.pos.y, enemy.pos.x, enemy.pos.y)
         return dist < self.unit_sight_range(agent_id)
 
+    def get_enemy_observer_ids(self, agent_id, communication_matrix):
+        """Return agents whose direct sightings feed ``agent_id``'s observation."""
+        if not self.share_enemy_info_with_neighbors:
+            return [agent_id]
+
+        communicating_agent_ids = np.where(communication_matrix[agent_id])[0]
+        return [agent_id] + communicating_agent_ids.tolist()
+
     def get_agent_communication_matrix(self):
         """Returns a connected undirected communication graph over alive agents."""
         arr = np.zeros((self.n_agents, self.n_agents), dtype=np.bool_)
@@ -1916,8 +1928,9 @@ class StarCraft2Env(MultiAgentEnv):
         arr[:, :self.n_agents] = communication_matrix
 
         for agent_id in self.get_alive_agent_ids():
-            communicating_agent_ids = np.where(communication_matrix[agent_id])[0]
-            observing_agent_ids = [agent_id] + communicating_agent_ids.tolist()
+            observing_agent_ids = self.get_enemy_observer_ids(
+                agent_id, communication_matrix
+            )
             for e_id in self.enemies.keys():
                 if any(
                     self.is_enemy_visible_to_agent(observer_id, e_id)
