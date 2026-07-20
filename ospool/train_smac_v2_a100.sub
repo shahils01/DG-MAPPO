@@ -1,0 +1,42 @@
+# Submit this file from the DG-MAPPO repository root on ap40:
+#   mkdir -p ospool/logs
+#   condor_submit ospool/train_smac_v2_a100.sub
+
+universe = container
+
+# This image must contain CUDA-enabled PyTorch, the packages required by this
+# repository, SMACv2, StarCraft II, and SMAC_Maps/32x32_flat.SC2Map.
+container_image = osdf:///ospool/ap40/data/shahil.shaik/containers/dg-mappo-smacv2-v1.sif
+
+executable = ospool/run_train_smac_v2.sh
+
+log    = ospool/logs/train_smac_v2_$(Cluster).$(Process).log
+output = ospool/logs/train_smac_v2_$(Cluster).$(Process).out
+error  = ospool/logs/train_smac_v2_$(Cluster).$(Process).err
+
+# Transfer the code into the isolated execute-node sandbox. The container must
+# already contain all Python/system dependencies; execute nodes may lack network.
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT_OR_EVICT
+transfer_executable = YES
+transfer_input_files = mat
+transfer_output_files = mat/scripts/results
+
+# train_smac_v2.sh starts 32 parallel SMACv2 rollout environments.
+request_cpus   = 32
+request_memory = 64GB
+request_disk   = 20GB
+
+request_gpus = 1
+require_gpus = regexp("A100", DeviceName, "i")
+gpus_minimum_capability = 8.0
+gpus_minimum_memory = 39GB
+
++JobDurationCategory = "Long"
+
+# Preserve partial results when the payload exits with an error, and keep the
+# failed job inspectable rather than repeatedly retrying it.
+on_exit_hold = (ExitBySignal == True) || (ExitCode != 0)
+periodic_release = False
+
+queue 1
