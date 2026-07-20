@@ -43,6 +43,23 @@ class SMACEnemyInfoSharingTest(unittest.TestCase):
         self.assertFalse(strict_visibility[0, 2])
         self.assertTrue(strict_visibility[1, 2])
 
+    def test_strict_attack_visibility_clamps_shooting_range_to_sight(self):
+        env = StarCraft2Env.__new__(StarCraft2Env)
+        env._unit_sight_range = 2.0
+        env.strict_attack_visibility = True
+
+        self.assertTrue(env.target_is_action_visible(0, 1.5, 6.0))
+        self.assertFalse(env.target_is_action_visible(0, 3.0, 6.0))
+        self.assertFalse(env.target_is_action_visible(0, 7.0, 6.0))
+
+    def test_legacy_attack_visibility_can_be_restored(self):
+        env = StarCraft2Env.__new__(StarCraft2Env)
+        env._unit_sight_range = 2.0
+        env.strict_attack_visibility = False
+
+        self.assertTrue(env.target_is_action_visible(0, 3.0, 6.0))
+        self.assertFalse(env.target_is_action_visible(0, 7.0, 6.0))
+
 
 if __name__ == "__main__":
     unittest.main()

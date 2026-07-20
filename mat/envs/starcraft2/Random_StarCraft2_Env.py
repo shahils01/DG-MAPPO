@@ -201,6 +201,10 @@ class RandomStarCraft2Env(MultiAgentEnv):
         """
         # Map arguments
         self.map_name = args.map_name
+        self._unit_sight_range = args.unit_sight_range
+        self.strict_attack_visibility = getattr(
+            args, "strict_attack_visibility", True
+        )
 
         ### added ###
         self.add_local_obs = args.add_local_obs                         
@@ -921,7 +925,15 @@ class RandomStarCraft2Env(MultiAgentEnv):
 
     def unit_sight_range(self, agent_id):
         """Returns the sight range for an agent."""
-        return 9
+        return self._unit_sight_range
+
+    def target_is_action_visible(self, agent_id, distance, action_range):
+        """Return whether a target may appear in the targeted-action mask."""
+        if distance > action_range:
+            return False
+        if not self.strict_attack_visibility:
+            return True
+        return distance < self.unit_sight_range(agent_id)
 
     def unit_max_cooldown(self, unit):
         """Returns the maximal cooldown for a unit."""
@@ -1886,7 +1898,7 @@ class RandomStarCraft2Env(MultiAgentEnv):
                     dist = self.distance(
                         unit.pos.x, unit.pos.y, t_unit.pos.x, t_unit.pos.y
                     )
-                    if dist <= shoot_range:
+                    if self.target_is_action_visible(agent_id, dist, shoot_range):
                         avail_actions[t_id + self.n_actions_no_attack] = 1
 
             return avail_actions

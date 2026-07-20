@@ -101,7 +101,7 @@ def parse_args(args, parser):
         action="store_true",
         help=(
             "include enemies seen by direct communication neighbors in each "
-            "agent observation (default)"
+            "agent observation"
         ),
     )
     enemy_info_group.add_argument(
@@ -111,10 +111,31 @@ def parse_args(args, parser):
         action="store_false",
         help=(
             "restrict enemy features to enemies directly inside the observing "
-            "agent's sight range"
+            "agent's sight range (default)"
         ),
     )
-    parser.set_defaults(share_enemy_info_with_neighbors=True)
+    parser.set_defaults(share_enemy_info_with_neighbors=False)
+    attack_visibility_group = parser.add_mutually_exclusive_group()
+    attack_visibility_group.add_argument(
+        "--strict_attack_visibility",
+        dest="strict_attack_visibility",
+        action="store_true",
+        help=(
+            "make targeted actions available only when the target is both in "
+            "range and directly visible (default)"
+        ),
+    )
+    attack_visibility_group.add_argument(
+        "--allow_out_of_sight_attacks",
+        "--disable_strict_attack_visibility",
+        dest="strict_attack_visibility",
+        action="store_false",
+        help=(
+            "restore legacy action masks that expose targets inside shooting "
+            "range even when they are outside sight range"
+        ),
+    )
+    parser.set_defaults(strict_attack_visibility=True)
     parser.add_argument('--run_dir', type=str, default='', help="Which smac map to eval on")
     parser.add_argument("--add_move_state", action='store_true', default=False)
     parser.add_argument("--add_local_obs", action='store_true', default=False)
@@ -127,7 +148,21 @@ def parse_args(args, parser):
     parser.add_argument("--use_mustalive", action='store_false', default=True)
     parser.add_argument("--add_center_xy", action='store_false', default=True)
     parser.add_argument("--random_agent_order", action='store_true', default=False)
-    parser.add_argument("--strict_local_obs", type=bool, default=False)
+    local_obs_group = parser.add_mutually_exclusive_group()
+    local_obs_group.add_argument(
+        "--strict_local_obs",
+        dest="strict_local_obs",
+        action="store_true",
+        help="omit rich communication-neighbor ally features (default)",
+    )
+    local_obs_group.add_argument(
+        "--include_communicating_ally_features",
+        "--disable_strict_local_obs",
+        dest="strict_local_obs",
+        action="store_false",
+        help="restore rich position, health, type, and last-action ally features",
+    )
+    parser.set_defaults(strict_local_obs=True)
     parser.add_argument(
         "--smac_worker_timeout",
         type=float,
@@ -150,6 +185,14 @@ def main(args):
     print(
         "SMAC neighbor enemy-info sharing: "
         f"{'enabled' if all_args.share_enemy_info_with_neighbors else 'disabled'}"
+    )
+    print(
+        "SMAC strict attack visibility: "
+        f"{'enabled' if all_args.strict_attack_visibility else 'disabled'}"
+    )
+    print(
+        "SMAC strict local ally observations: "
+        f"{'enabled' if all_args.strict_local_obs else 'disabled'}"
     )
 
     # Keep the original DG-MAT flags as backward-compatible aliases while the

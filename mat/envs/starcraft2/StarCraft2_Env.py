@@ -216,7 +216,10 @@ class StarCraft2Env(MultiAgentEnv):
         self.stacked_frames = args.stacked_frames
         self._unit_sight_range = args.unit_sight_range
         self.share_enemy_info_with_neighbors = getattr(
-            args, "share_enemy_info_with_neighbors", True
+            args, "share_enemy_info_with_neighbors", False
+        )
+        self.strict_attack_visibility = getattr(
+            args, "strict_attack_visibility", True
         )
         
         map_params = get_map_params(self.map_name)
@@ -1095,12 +1098,12 @@ class StarCraft2Env(MultiAgentEnv):
                 e_x = e_unit.pos.x
                 e_y = e_unit.pos.y
                 dist = self.distance(x, y, e_x, e_y)
-                observed_by_comm_neighbor = any(
+                enemy_observed = any(
                     self.is_enemy_visible_to_agent(observer_id, e_id)
                     for observer_id in observing_agent_ids
                 )
 
-                if observed_by_comm_neighbor:  # visible locally or shared by a communicating ally
+                if enemy_observed:
                     # Sight range > shoot range
                     enemy_feats[e_id, 0] = avail_actions[self.n_actions_no_attack + e_id]  # available
                     enemy_feats[e_id, 1] = dist / sight_range  # distance
@@ -1839,6 +1842,14 @@ class StarCraft2Env(MultiAgentEnv):
         communicating_agent_ids = np.where(communication_matrix[agent_id])[0]
         return [agent_id] + communicating_agent_ids.tolist()
 
+    def target_is_action_visible(self, agent_id, distance, action_range):
+        """Return whether a target may appear in the targeted-action mask."""
+        if distance > action_range:
+            return False
+        if not self.strict_attack_visibility:
+            return True
+        return distance < self.unit_sight_range(agent_id)
+
     def get_agent_communication_matrix(self):
         """Returns a connected undirected communication graph over alive agents."""
         arr = np.zeros((self.n_agents, self.n_agents), dtype=np.bool_)
@@ -2041,7 +2052,7 @@ class StarCraft2Env(MultiAgentEnv):
                     dist = self.distance(
                         unit.pos.x, unit.pos.y, t_unit.pos.x, t_unit.pos.y
                     )
-                    if dist <= shoot_range:
+                    if self.target_is_action_visible(agent_id, dist, shoot_range):
                         avail_actions[t_id + self.n_actions_no_attack] = 1
 
             return avail_actions
