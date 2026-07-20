@@ -8,7 +8,6 @@ from torch import Tensor
 from mat.runner.shared.base_runner import Runner
 import torch.nn.functional as F
 from collections import defaultdict
-from mat.envs.starcraft2.StarCraft2_Env import StarCraft2Env
 
 def _t2n(x):
     return x.detach().cpu().numpy()

@@ -9,8 +9,6 @@ from pathlib import Path
 import torch
 sys.path.append("../../")
 from mat.config import get_config
-from mat.envs.starcraft2.StarCraft2_Env import StarCraft2Env
-from mat.envs.starcraft2.Random_StarCraft2_Env import RandomStarCraft2Env
 from mat.envs.smacv2_adapter import SMACv2EnvAdapter, load_smacv2_env_args
 from mat.envs.env_wrappers import ShareSubprocVecEnv
 from mat.runner.shared.smac_runner_new import SMACRunner
@@ -22,6 +20,13 @@ def make_train_env(all_args, env_config=None):
     def get_env_fn(rank, env_config):
         def init_env():
             if all_args.env_name.lower() == "starcraft2":
+                # Import legacy SMAC only for legacy runs. Importing it before
+                # SMACv2 registers duplicate PySC2 map names such as ``3m``.
+                from mat.envs.starcraft2.StarCraft2_Env import StarCraft2Env
+                from mat.envs.starcraft2.Random_StarCraft2_Env import (
+                    RandomStarCraft2Env,
+                )
+
                 if all_args.random_agent_order:
                     env = RandomStarCraft2Env(all_args)
                 else:
@@ -55,6 +60,12 @@ def make_eval_env(all_args, env_config=None):
     def get_env_fn(rank, env_config):
         def init_env():
             if all_args.env_name.lower() == "starcraft2":
+                # Keep the legacy map registry out of SMACv2 worker processes.
+                from mat.envs.starcraft2.StarCraft2_Env import StarCraft2Env
+                from mat.envs.starcraft2.Random_StarCraft2_Env import (
+                    RandomStarCraft2Env,
+                )
+
                 if all_args.random_agent_order:
                     env = RandomStarCraft2Env(all_args)
                 else:

@@ -1,4 +1,6 @@
+import ast
 import os
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
@@ -82,6 +84,23 @@ def _args(**overrides):
 
 
 class SMACv2ConfigTest(unittest.TestCase):
+    def test_training_module_does_not_eagerly_register_legacy_smac_maps(self):
+        repository_root = Path(__file__).resolve().parents[2]
+        modules = [
+            repository_root / "mat" / "scripts" / "train" / "train_smac.py",
+            repository_root / "mat" / "runner" / "shared" / "smac_runner_new.py",
+        ]
+        for module_path in modules:
+            tree = ast.parse(module_path.read_text(encoding="utf-8"))
+            eager_legacy_imports = [
+                node.module
+                for node in tree.body
+                if isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.module.startswith("mat.envs.starcraft2")
+            ]
+            self.assertEqual(eager_legacy_imports, [], str(module_path))
+
     def test_epo_is_the_default_and_overrides_agent_counts(self):
         env_args, scenario, config_path = load_smacv2_env_args(
             "terran_epo", n_units=6, n_enemies=5
