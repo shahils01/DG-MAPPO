@@ -257,10 +257,23 @@ class SMACv2EnvAdapter:
 
     def _normalise_info(self, raw_info, terminated):
         raw_info = dict(raw_info or {})
-        try:
-            stats = dict(self.env.get_stats())
-        except (AttributeError, TypeError):
-            stats = {}
+        # Upstream SMACv2 1.0.0 divides battles_won by battles_game in
+        # get_stats(), which raises before the first episode has completed.
+        # The counters we need are public environment attributes, so reading
+        # them directly is both cheaper and safe when battles_game is zero.
+        battles_game = getattr(self.env, "battles_game", None)
+        if battles_game is not None:
+            stats = {
+                "battles_won": getattr(self.env, "battles_won", 0),
+                "battles_game": battles_game,
+                "timeouts": getattr(self.env, "timeouts", 0),
+                "restarts": getattr(self.env, "force_restarts", 0),
+            }
+        else:
+            try:
+                stats = dict(self.env.get_stats())
+            except (AttributeError, ArithmeticError, TypeError):
+                stats = {}
 
         won = bool(raw_info.get("battle_won", raw_info.get("won", False)))
         common = dict(raw_info)

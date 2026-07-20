@@ -72,6 +72,18 @@ class _FakeSMACv2:
         self.closed = True
 
 
+class _PreEpisodeSMACv2(_FakeSMACv2):
+    def __init__(self):
+        super().__init__()
+        self.battles_won = 0
+        self.battles_game = 0
+        self.timeouts = 0
+        self.force_restarts = 0
+
+    def get_stats(self):
+        raise ZeroDivisionError("division by zero")
+
+
 def _args(**overrides):
     values = {
         "use_stacked_frames": False,
@@ -124,6 +136,16 @@ class SMACv2ConfigTest(unittest.TestCase):
 
 
 class SMACv2AdapterTest(unittest.TestCase):
+    def test_info_is_safe_before_the_first_battle_finishes(self):
+        env = SMACv2EnvAdapter(_args(), env=_PreEpisodeSMACv2())
+
+        infos = env._normalise_info({"battle_won": False}, terminated=False)
+
+        self.assertEqual(infos[0]["battles_won"], 0)
+        self.assertEqual(infos[0]["battles_game"], 0)
+        self.assertEqual(infos[0]["battles_draw"], 0)
+        self.assertEqual(infos[0]["restarts"], 0)
+
     def test_reset_and_step_match_the_runner_interface(self):
         upstream = _FakeSMACv2()
         env = SMACv2EnvAdapter(_args(), env=upstream, seed=7)
