@@ -173,7 +173,7 @@ def get_config():
     parser.add_argument(
         "--buffer_device",
         type=str,
-        default="auto",
+        default="cpu",
         choices=["auto", "cpu", "cuda"],
         help="rollout-buffer storage device; auto uses CPU for DG-MAT and CUDA for legacy algorithms",
     )
