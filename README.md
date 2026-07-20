@@ -56,6 +56,100 @@ When your environment is ready, you could run shells in the "scripts" folder wit
 ```
 If you would like to change the configs of experiments, you could modify sh files or look for config.py for more details.
 
+### SMACv2 and EPO
+
+Install the official SMACv2 environment in the same Python environment as this
+repository:
+
+```bash
+pip install -r requirements-smacv2.txt
+```
+
+Install the official SMACv2 `SMAC_Maps` release in StarCraft II as well. The
+folder must include `32x32_flat.SC2Map`; follow the map link and `SC2PATH`
+instructions in `mat/envs/smacv2/README.md`.
+
+`train_smac.py` adapts the official SMACv2 API to the runner used by both
+`mat_dec` and `mappo_dgnn_dsgd`. The default SMACv2 configuration is the
+strongest Terran EPO setting: `prob_obs_enemy=0.0` and `action_mask=False`.
+Bundled aliases are `terran_epo`, `protoss_epo`, and `zerg_epo`; omit `_epo`
+for the corresponding standard SMACv2 configuration.
+
+MAT-Dec example:
+
+```bash
+python mat/scripts/train/train_smac.py \
+  --env_name smacv2 \
+  --smacv2_config terran_epo \
+  --algorithm_name mat_dec \
+  --experiment_name mat_dec_terran_epo \
+  --seed 0 \
+  --n_rollout_threads 32 \
+  --episode_length 200 \
+  --num_env_steps 10000000 \
+  --mini_batch_size 3200 \
+  --lr 5e-4 \
+  --ppo_epoch 10 \
+  --gamma 0.99 \
+  --gae_lambda 0.95 \
+  --clip_param 0.05 \
+  --entropy_coef 0.01 \
+  --max_grad_norm 10 \
+  --n_block 1 \
+  --n_head 1 \
+  --n_embd 64 \
+  --n_quants 1 \
+  --use_value_active_masks \
+  --use_eval
+```
+
+MAPPO-DGNN-DSGD example:
+
+```bash
+python mat/scripts/train/train_smac.py \
+  --env_name smacv2 \
+  --smacv2_config terran_epo \
+  --algorithm_name mappo_dgnn_dsgd \
+  --experiment_name mappo_dgnn_dsgd_terran_epo \
+  --truelyDistributed True \
+  --consensusLoss True \
+  --gnn_loss_coef 1 \
+  --num-layers 3 \
+  --iterations 5 \
+  --seed 0 \
+  --n_training_threads 16 \
+  --n_rollout_threads 32 \
+  --num_mini_batch 2 \
+  --episode_length 200 \
+  --num_env_steps 10000000 \
+  --mini_batch_size 3200 \
+  --lr 5e-4 \
+  --ppo_epoch 10 \
+  --gamma 0.99 \
+  --gae_lambda 0.95 \
+  --clip_param 0.05 \
+  --entropy_coef 0.01 \
+  --max_grad_norm 10 \
+  --encode_state True \
+  --hidden_size 64 \
+  --n_embd 64 \
+  --out_channels 64 \
+  --num-heads 1 \
+  --n_quants 1 \
+  --detach True \
+  --share_policy \
+  --use_value_active_masks \
+  --use_eval
+```
+
+For graph algorithms, ally edges use the smaller SMACv2 sight range of each
+unit pair. Set `--smacv2_comm_range R` to use a fixed communication radius.
+Disconnected graphs remain disconnected by default; use
+`--smacv2_force_connected_graph` only for an explicit connectivity ablation.
+Override EPO severity with `--smacv2_prob_obs_enemy P`. Enabling
+`--smacv2_action_mask` reintroduces the target-availability side channel and is
+therefore not recommended for the strongest partial-observability test.
+
 ### DG-MAT
 
 `dg_mat` combines DG-MAPPO-style graph-local execution and D-SGD parameter

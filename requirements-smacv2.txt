@@ -1,0 +1,2 @@
+# SMACv2 is distributed from its official GitHub repository rather than PyPI.
+git+https://github.com/oxwhirl/smacv2.git

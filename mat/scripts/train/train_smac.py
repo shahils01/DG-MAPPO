@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 import sys
 import os
-import yaml
 import wandb
 import socket
 import setproctitle
@@ -11,25 +10,18 @@ import torch
 sys.path.append("../../")
 from mat.config import get_config
 from mat.envs.starcraft2.StarCraft2_Env import StarCraft2Env
-# from mat.envs.smacv2.smacv2.env.starcraft2.starcraft2 import StarCraft2Env_ as SMAC_v2
 from mat.envs.starcraft2.Random_StarCraft2_Env import RandomStarCraft2Env
+from mat.envs.smacv2_adapter import SMACv2EnvAdapter, load_smacv2_env_args
 from mat.envs.env_wrappers import ShareSubprocVecEnv
-from mat.envs.starcraft2.smac_maps import get_map_params
-# from mat.envs.smacv2.smacv2.env.starcraft2.maps.smac_maps import get_map_params
-# from mat.runner.shared.smac_runner import SMACRunner
 from mat.runner.shared.smac_runner_new import SMACRunner
 from mat.runner.shared.dgn_runner import DGNRunner
 from mat.algorithms.mat.algorithm.dg_mat import resolve_agent_devices
-
-yaml_path = os.path.join(os.path.expanduser("~"), "Desktop", "marl_ws", 
-                        "Multi-Agent-Transformer", "mat", "envs", "smacv2",
-                        "smacv2", "examples", "configs")
 
 """Train script for SMAC."""
 def make_train_env(all_args, env_config=None):
     def get_env_fn(rank, env_config):
         def init_env():
-            if all_args.env_name == "StarCraft2":
+            if all_args.env_name.lower() == "starcraft2":
                 if all_args.random_agent_order:
                     env = RandomStarCraft2Env(all_args)
                 else:
@@ -37,11 +29,12 @@ def make_train_env(all_args, env_config=None):
 
                 env.seed(all_args.seed + rank * 1000)
 
-            # elif all_args.env_name == "smacv2":
-            #     if env_config is not None:
-            #         env = SMAC_v2(all_args, **env_config)
-            #     else:
-            #         env = SMAC_v2(all_args)
+            elif all_args.env_name.lower() == "smacv2":
+                env = SMACv2EnvAdapter(
+                    all_args,
+                    env_args=env_config,
+                    seed=all_args.seed + rank * 1000,
+                )
             else:
                 print("Can not support the " + all_args.env_name + "environment.")
                 raise NotImplementedError
@@ -61,7 +54,7 @@ def make_train_env(all_args, env_config=None):
 def make_eval_env(all_args, env_config=None):
     def get_env_fn(rank, env_config):
         def init_env():
-            if all_args.env_name == "StarCraft2":
+            if all_args.env_name.lower() == "starcraft2":
                 if all_args.random_agent_order:
                     env = RandomStarCraft2Env(all_args)
                 else:
@@ -69,12 +62,12 @@ def make_eval_env(all_args, env_config=None):
                 
                 env.seed(all_args.seed * 50000 + rank * 10000)
                 
-            # elif all_args.env_name == "smacv2":
-            #     all_args.seed = all_args.seed * 50000 + rank * 10000
-            #     if env_config is not None:
-            #         env = SMAC_v2(all_args, **env_config)
-            #     else:
-            #         env = SMAC_v2(all_args)
+            elif all_args.env_name.lower() == "smacv2":
+                env = SMACv2EnvAdapter(
+                    all_args,
+                    env_args=env_config,
+                    seed=all_args.seed * 50000 + rank * 10000,
+                )
             else:
                 print("Can not support the " + all_args.env_name + "environment.")
                 raise NotImplementedError
@@ -92,6 +85,62 @@ def make_eval_env(all_args, env_config=None):
 def parse_args(args, parser):
     parser.add_argument('--map_name', type=str, default='3m', help="Which smac map to run on")
     parser.add_argument('--eval_map_name', type=str, default='3m', help="Which smac map to eval on")
+    parser.add_argument(
+        "--smacv2_config",
+        type=str,
+        default="terran_epo",
+        help=(
+            "SMACv2 YAML path or bundled alias: terran[_epo], protoss[_epo], "
+            "or zerg[_epo] (default: terran_epo)"
+        ),
+    )
+    parser.add_argument(
+        "--smacv2_n_units",
+        type=int,
+        default=None,
+        help="override capability_config.n_units from the SMACv2 YAML",
+    )
+    parser.add_argument(
+        "--smacv2_n_enemies",
+        type=int,
+        default=None,
+        help="override capability_config.n_enemies from the SMACv2 YAML",
+    )
+    parser.add_argument(
+        "--smacv2_prob_obs_enemy",
+        type=float,
+        default=None,
+        help="override the EPO enemy-observation probability (0 is strongest EPO)",
+    )
+    smacv2_action_mask_group = parser.add_mutually_exclusive_group()
+    smacv2_action_mask_group.add_argument(
+        "--smacv2_action_mask",
+        dest="smacv2_action_mask",
+        action="store_true",
+        help="enable upstream target-action availability masks",
+    )
+    smacv2_action_mask_group.add_argument(
+        "--smacv2_no_action_mask",
+        dest="smacv2_action_mask",
+        action="store_false",
+        help="disable target-action masks so they cannot leak hidden enemies",
+    )
+    parser.set_defaults(smacv2_action_mask=None)
+    parser.add_argument(
+        "--smacv2_comm_range",
+        type=float,
+        default=None,
+        help=(
+            "fixed ally communication radius for graph algorithms; by default "
+            "each pair uses the smaller of its SMACv2 unit sight ranges"
+        ),
+    )
+    parser.add_argument(
+        "--smacv2_force_connected_graph",
+        action="store_true",
+        default=False,
+        help="repair disconnected ally graphs with minimum-distance edges",
+    )
     parser.add_argument('--unit_sight_range', type=float, default=4.0,
                         help="Sight range used for allied and enemy unit observations")
     enemy_info_group = parser.add_mutually_exclusive_group()
@@ -175,6 +224,8 @@ def parse_args(args, parser):
         parser.error("--unit_sight_range must be greater than 0")
     if all_args.smac_worker_timeout <= 0:
         parser.error("--smac_worker_timeout must be greater than 0")
+    if all_args.smacv2_comm_range is not None and all_args.smacv2_comm_range <= 0:
+        parser.error("--smacv2_comm_range must be greater than 0")
 
     return all_args
 
@@ -182,18 +233,42 @@ def parse_args(args, parser):
 def main(args):
     parser = get_config()
     all_args = parse_args(args, parser)
-    print(
-        "SMAC neighbor enemy-info sharing: "
-        f"{'enabled' if all_args.share_enemy_info_with_neighbors else 'disabled'}"
-    )
-    print(
-        "SMAC strict attack visibility: "
-        f"{'enabled' if all_args.strict_attack_visibility else 'disabled'}"
-    )
-    print(
-        "SMAC strict local ally observations: "
-        f"{'enabled' if all_args.strict_local_obs else 'disabled'}"
-    )
+    smacv2_env_args = None
+    if all_args.env_name.lower() == "smacv2":
+        try:
+            smacv2_env_args, scenario_name, config_path = load_smacv2_env_args(
+                config_name=all_args.smacv2_config,
+                n_units=all_args.smacv2_n_units,
+                n_enemies=all_args.smacv2_n_enemies,
+                prob_obs_enemy=all_args.smacv2_prob_obs_enemy,
+                action_mask=all_args.smacv2_action_mask,
+            )
+        except (FileNotFoundError, KeyError, TypeError, ValueError) as error:
+            parser.error(str(error))
+        all_args.map_name = scenario_name
+        all_args.eval_map_name = scenario_name
+        all_args.smacv2_map_name = smacv2_env_args["map_name"]
+        print(f"SMACv2 config: {config_path}")
+        print(
+            "SMACv2 scenario: "
+            f"{scenario_name}, map={all_args.smacv2_map_name}, "
+            f"prob_obs_enemy={smacv2_env_args.get('prob_obs_enemy', 1.0)}, "
+            f"action_mask={smacv2_env_args.get('action_mask', True)}, "
+            f"force_connected_graph={all_args.smacv2_force_connected_graph}"
+        )
+    else:
+        print(
+            "SMAC neighbor enemy-info sharing: "
+            f"{'enabled' if all_args.share_enemy_info_with_neighbors else 'disabled'}"
+        )
+        print(
+            "SMAC strict attack visibility: "
+            f"{'enabled' if all_args.strict_attack_visibility else 'disabled'}"
+        )
+        print(
+            "SMAC strict local ally observations: "
+            f"{'enabled' if all_args.strict_local_obs else 'disabled'}"
+        )
 
     # Keep the original DG-MAT flags as backward-compatible aliases while the
     # generic names also cover MAPPO-DGNN-DSGD.
@@ -215,6 +290,12 @@ def main(args):
         all_args.encode_state = False
         all_args.dec_actor = False
         all_args.share_actor = False
+        all_args.share_policy = False
+        all_args.truelyDistributed = True
+
+    if all_args.algorithm_name == "mappo_dgnn_dsgd":
+        # D-SGD requires distinct agent-owned parameter sets and optimizers.
+        # Make the algorithm name sufficient to select that execution mode.
         all_args.share_policy = False
         all_args.truelyDistributed = True
 
@@ -297,12 +378,12 @@ def main(args):
             all_args.user_name))
 
     
-    env_config = {}
-    env_config['env_args'] = None
     wandb_project = all_args.map_name
-    envs = make_train_env(all_args)
-    eval_envs = make_eval_env(all_args) if all_args.use_eval else None
-    num_agents = get_map_params(all_args.map_name)["n_agents"]
+    envs = make_train_env(all_args, smacv2_env_args)
+    eval_envs = (
+        make_eval_env(all_args, smacv2_env_args) if all_args.use_eval else None
+    )
+    num_agents = envs.n_agents
     all_args.run_dir = run_dir
 
     config = {
