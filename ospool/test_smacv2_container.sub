@@ -23,7 +23,7 @@ require_gpus = regexp("A100", DeviceName, "i")
 gpus_minimum_capability = 8.0
 gpus_minimum_memory = 39GB
 
-+JobDurationCategory = "Short"
++JobDurationCategory = "Medium"
 
 on_exit_hold = (ExitBySignal == True) || (ExitCode != 0)
 periodic_release = False
