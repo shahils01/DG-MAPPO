@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-env="smacv2"
-# The bundled `terran` config resolves to the terran_5_vs_5 scenario. The
-# scenario name itself is not a valid --smacv2_config alias in this repository.
-map="terran"
-algo="mat_dec"
-exp="mat_dec"
+env="smacv2"    # StarCraft2 or smacv2
+map="protoss"    # 6h_vs_8z, 5m_vs_6m, MMM2, protoss_5_vs_5
+algo="mappo_dgnn_dsgd"       # Algos: {mappo_dgnn_dsgd, mat, mat_dec, ippo, consensus_ippo}
+exp="mappo_dgnn_dsgd"
 seed=0
+hidden_dim=64
+unit_sight_range=2
 
 echo "env is ${env}, map is ${map}, algo is ${algo}, exp is ${exp}, seed is ${seed}"
 python train/train_smac.py   \
@@ -15,16 +15,16 @@ python train/train_smac.py   \
  --smacv2_config ${map}   \
  --algorithm_name ${algo}   \
  --experiment_name ${exp}   \
- --seed ${seed}   \
  --iterations 5   \
+ --encode_state True   \
  --consensusLoss True   \
  --episode_length 200   \
  --num_env_steps 40000000   \
  --lr 5e-4   \
  --ppo_epoch 10   \
- --gamma 0.98   \
+ --gamma 0.99   \
  --gae_lambda 0.95   \
- --clip_param 0.2   \
+ --clip_param 0.05   \
  --save_interval 100000   \
  --entropy_coef 0.01   \
  --max_grad_norm 10   \
