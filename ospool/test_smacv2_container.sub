@@ -1,0 +1,31 @@
+# Submit from the DG-MAPPO repository root on ap40.
+universe = container
+container_image = osdf:///ospool/ap40/data/shahil.shaik/containers/dg-mappo-smacv2-v1.sif
+
+executable = ospool/test_smacv2_container.sh
+
+log    = ospool/logs/smacv2_container_test_$(Cluster).$(Process).log
+output = ospool/logs/smacv2_container_test_$(Cluster).$(Process).out
+error  = ospool/logs/smacv2_container_test_$(Cluster).$(Process).err
+
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+transfer_executable = YES
+
+request_cpus   = 2
+request_memory = 8GB
+request_disk   = 10GB
+
+# Use the same GPU family as the real training job, but with a much smaller
+# CPU/RAM request so the smoke test can match sooner.
+request_gpus = 1
+require_gpus = regexp("A100", DeviceName, "i")
+gpus_minimum_capability = 8.0
+gpus_minimum_memory = 39GB
+
++JobDurationCategory = "Short"
+
+on_exit_hold = (ExitBySignal == True) || (ExitCode != 0)
+periodic_release = False
+
+queue 1

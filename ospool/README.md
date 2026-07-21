@@ -23,6 +23,58 @@ By default the wrapper expects StarCraft II at `/opt/StarCraftII`. If the image
 uses another location, set `SC2PATH` in the image or edit the default in
 `run_train_smac_v2.sh`.
 
+Build the supplied definition from the repository root on an x86-64 Linux
+machine with Apptainer fakeroot support:
+
+```bash
+cd ~/DG-MAPPO
+OSPOOL_DATA=/ospool/ap40/data/shahil.shaik
+mkdir -p \
+  "$HOME/apptainer-tmp" \
+  "$OSPOOL_DATA/apptainer-cache" \
+  "$OSPOOL_DATA/containers"
+
+export APPTAINER_TMPDIR="$HOME/apptainer-tmp"
+export APPTAINER_CACHEDIR="$OSPOOL_DATA/apptainer-cache"
+export TMPDIR="$HOME/apptainer-tmp"
+export APPTAINER_NO_MOUNT=tmp
+
+apptainer build --fakeroot \
+  "$OSPOOL_DATA/containers/dg-mappo-smacv2-v1.sif" \
+  ospool/dg-mappo-smacv2.def
+```
+
+The temporary writable image stays in the 40 GB home allocation because the
+OSDF FUSE mount is `nodev` and may not support Apptainer builds. The reusable
+OCI cache and final image stay in the larger `/ospool` allocation. Large files
+downloaded during `%post` use `/opt/build-tmp` inside the build filesystem,
+avoiding the access point's small host `/tmp` quota.
+
+If `--fakeroot` is not enabled on the access point, stop after the error rather
+than attempting a privileged build there. Build the same definition on another
+x86-64 Linux system with root/fakeroot support, then copy the resulting `.sif`
+to the path above.
+
+Verify the completed image before submitting:
+
+```bash
+apptainer test \
+  /ospool/ap40/data/shahil.shaik/containers/dg-mappo-smacv2-v1.sif
+```
+
+If the access point cannot run Apptainer locally, test the image on an OSPool
+execution node instead:
+
+```bash
+cd ~/DG-MAPPO
+chmod +x ospool/test_smacv2_container.sh
+mkdir -p ospool/logs
+condor_submit ospool/test_smacv2_container.sub
+```
+
+After it finishes, the `.out` log must end with
+`CONTAINER SMOKE TEST PASSED` before submitting the full training job.
+
 ## Copy and submit
 
 From the Mac:

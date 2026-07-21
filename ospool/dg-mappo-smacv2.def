@@ -1,0 +1,88 @@
+Bootstrap: docker
+From: pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
+
+%labels
+    Author shahil.shaik
+    Description "DG-MAPPO SMACv2 training environment for OSPool"
+
+%post
+    set -eux
+
+    export DEBIAN_FRONTEND=noninteractive
+    # The access point's host /tmp has a very small per-user quota. Keep pip
+    # scratch and large downloads inside the image's build filesystem instead.
+    mkdir -p /opt/build-tmp
+    export TMPDIR=/opt/build-tmp
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+        libgl1 \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
+        unzip \
+        wget
+    rm -rf /var/lib/apt/lists/*
+
+    python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+    python -m pip install --no-cache-dir \
+        gym==0.26.2 \
+        numpy==1.26.4 \
+        psutil==7.0.0 \
+        PyYAML==6.0.2 \
+        scikit-learn==1.6.1 \
+        scipy==1.13.1 \
+        setproctitle==1.3.6 \
+        tensorboardX==2.6.4 \
+        wandb==0.21.1
+
+    # Compiled PyG extensions matching the PyTorch 2.4 / CUDA 12.1 base image.
+    python -m pip install --no-cache-dir \
+        pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv \
+        -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+    python -m pip install --no-cache-dir torch-geometric==2.6.1
+    # The repository only vendors SMACv2 configs/examples, not the complete
+    # smacv2/env package, so install the complete official upstream package.
+    python -m pip install --no-cache-dir --no-build-isolation \
+        git+https://github.com/oxwhirl/smacv2.git
+
+    # Blizzard's Linux StarCraft II archive requires explicit EULA acceptance.
+    wget -q \
+        http://blzdistsc2-a.akamaihd.net/Linux/SC2.4.10.zip \
+        -O /opt/build-tmp/SC2.4.10.zip
+    unzip -q -P iagreetotheeula /opt/build-tmp/SC2.4.10.zip -d /opt
+    rm -f /opt/build-tmp/SC2.4.10.zip
+
+    # SMACv2 needs its procedural 32x32 map, which is not in the legacy SMAC
+    # map bundle already stored in this repository.
+    mkdir -p /opt/StarCraftII/Maps
+    wget -q \
+        https://github.com/oxwhirl/smacv2/releases/download/maps/SMAC_Maps.zip \
+        -O /opt/build-tmp/SMACv2_Maps.zip
+    unzip -q /opt/build-tmp/SMACv2_Maps.zip -d /opt/StarCraftII/Maps
+
+    # GitHub release archives have used more than one top-level layout. Find
+    # the required map wherever it was extracted and normalize its location.
+    map_source="$(find /opt/StarCraftII/Maps -type f \
+        -name 32x32_flat.SC2Map -print -quit)"
+    test -n "$map_source"
+    mkdir -p /opt/StarCraftII/Maps/SMAC_Maps
+    if [ "$map_source" != "/opt/StarCraftII/Maps/SMAC_Maps/32x32_flat.SC2Map" ]; then
+        cp "$map_source" /opt/StarCraftII/Maps/SMAC_Maps/32x32_flat.SC2Map
+    fi
+    rm -rf /opt/build-tmp
+
+    find /opt/StarCraftII/Versions -type f -name SC2_x64 -exec chmod 755 {} +
+    test -f /opt/StarCraftII/Maps/SMAC_Maps/32x32_flat.SC2Map
+
+%environment
+    export SC2PATH=/opt/StarCraftII
+    export PYTHONUNBUFFERED=1
+    export MPLBACKEND=Agg
+
+%test
+    python -c "import torch, torch_geometric, torch_scatter, smacv2; print(torch.__version__); print(smacv2.__file__)"
+    find /opt/StarCraftII/Versions -type f -name SC2_x64 -perm -u+x -print -quit | grep -q .
+    test -f /opt/StarCraftII/Maps/SMAC_Maps/32x32_flat.SC2Map
