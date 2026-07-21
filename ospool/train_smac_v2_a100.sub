@@ -29,11 +29,11 @@ request_memory = 100GB
 request_disk   = 20GB
 
 request_gpus = 1
-require_gpus = regexp("A100", DeviceName, "i")
+# Accept any GPU meeting these capability and memory requirements.
 gpus_minimum_capability = 8.0
-gpus_minimum_memory = 39GB
+gpus_minimum_memory = 20GB
 
-+JobDurationCategory = "Long"
++JobDurationCategory = "Medium"
 
 # Preserve partial results when the payload exits with an error, and keep the
 # failed job inspectable rather than repeatedly retrying it.

@@ -22,6 +22,7 @@ request_gpus = 1
 require_gpus = regexp("A100", DeviceName, "i")
 gpus_minimum_capability = 8.0
 gpus_minimum_memory = 39GB
+requirements = regexp("A100", TARGET.GPUs_DeviceName, "i") && $(requirements:True)
 
 +JobDurationCategory = "Medium"
 

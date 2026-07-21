@@ -5,17 +5,17 @@ echo "Host: $(hostname)"
 echo "Working directory: $PWD"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-unset}"
 
+# HTCondor is configured to transfer this directory on every exit. Create it
+# before validation so an early failure reports its real exit code instead of
+# being masked by a missing-output-directory transfer error.
+rm -rf mat/scripts/results
+mkdir -p mat/scripts/results
+
 if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi
 else
   echo "ERROR: nvidia-smi is unavailable inside the job." >&2
   exit 10
-fi
-
-gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1)
-if [[ "${gpu_name}" != *A100* ]]; then
-  echo "ERROR: HTCondor assigned '${gpu_name}', not an NVIDIA A100." >&2
-  exit 11
 fi
 
 # Override this in the container environment if SC2 is installed elsewhere.
@@ -50,10 +50,6 @@ if [[ -z "${WANDB_API_KEY:-}" ]]; then
   export WANDB_MODE=offline
   echo "WANDB_API_KEY is unset; recording the W&B run offline."
 fi
-
-# Do not send old local results back as output from this job sandbox.
-rm -rf mat/scripts/results
-mkdir -p mat/scripts/results
 
 cd mat/scripts
 exec bash train_smac_v2.sh
