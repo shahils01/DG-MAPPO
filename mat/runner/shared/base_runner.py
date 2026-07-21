@@ -82,8 +82,15 @@ class Runner(object):
             if not os.path.exists(self.save_dir):
                 os.makedirs(self.save_dir)
 
-        if self.algorithm_name.startswith('mat'):
-            share_observation_space = self.envs.share_observation_space[0] if self.use_centralized_V else self.envs.observation_space[0]
+        if (
+            self.algorithm_name.startswith('mat')
+            or self.algorithm_name == "mappo_dgnn_dsgd"
+        ):
+            share_observation_space = (
+                self.envs.share_observation_space[0]
+                if self.use_centralized_V
+                else self.envs.observation_space[0]
+            )
         else:
             share_observation_space = self.envs.share_observation_space[0]
             

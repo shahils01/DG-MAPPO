@@ -15,12 +15,17 @@ python train/train_smac.py   \
  --smacv2_config ${map}   \
  --algorithm_name ${algo}   \
  --experiment_name ${exp}   \
+ --seed ${seed}   \
+ --unit_sight_range ${unit_sight_range}   \
+ --n_embd ${hidden_dim}   \
  --iterations 5   \
- --encode_state True   \
  --consensusLoss True   \
  --episode_length 200   \
  --num_env_steps 40000000   \
  --lr 5e-4   \
+ --use_actor_gru   \
+ --use_critic_gru   \
+ --data_chunk_length 20   \
  --ppo_epoch 10   \
  --gamma 0.99   \
  --gae_lambda 0.95   \

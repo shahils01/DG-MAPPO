@@ -313,6 +313,7 @@ def main(args):
         # nor its recurrent state may consume the global SMAC state.
         all_args.use_centralized_critic = False
         all_args.use_centralized_V = False
+        all_args.encode_state = False
 
     recurrent_dgnn = all_args.use_actor_gru or all_args.use_critic_gru
     if recurrent_dgnn and all_args.algorithm_name != "mappo_dgnn_dsgd":
