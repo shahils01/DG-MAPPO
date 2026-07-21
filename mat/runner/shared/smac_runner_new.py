@@ -396,6 +396,11 @@ class SMACRunner(Runner):
                 adjcency_matrix = torch.tensor(
                     adjcency_matrix, dtype=torch.float32, device=self.device
                 )
+
+            if not self.use_centralized_V:
+                # Match training: a decentralized critic receives the local
+                # observation in the critic-input slot, never global state.
+                eval_share_obs = eval_obs
             
             self.trainer.prep_rollout()
             eval_actions, eval_rnn_states = \

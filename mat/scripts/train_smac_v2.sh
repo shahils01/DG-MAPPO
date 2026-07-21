@@ -7,7 +7,6 @@ algo="mappo_dgnn_dsgd"       # Algos: {mappo_dgnn_dsgd, mat, mat_dec, ippo, cons
 exp="mappo_dgnn_dsgd"
 seed=0
 hidden_dim=64
-unit_sight_range=2
 
 echo "env is ${env}, map is ${map}, algo is ${algo}, exp is ${exp}, seed is ${seed}"
 python train/train_smac.py   \
@@ -16,7 +15,6 @@ python train/train_smac.py   \
  --algorithm_name ${algo}   \
  --experiment_name ${exp}   \
  --seed ${seed}   \
- --unit_sight_range ${unit_sight_range}   \
  --n_embd ${hidden_dim}   \
  --iterations 5   \
  --consensusLoss True   \
