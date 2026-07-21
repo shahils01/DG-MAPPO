@@ -298,6 +298,8 @@ class SharedReplayBuffer(object):
         self.masks[0].copy_(self.masks[-1])
         self.bad_masks[0].copy_(self.bad_masks[-1])
         self.active_masks[0].copy_(self.active_masks[-1])
+        self.edge_index[0].copy_(self.edge_index[-1])
+        self.adjcency_matrix[0].copy_(self.adjcency_matrix[-1])
         if self.available_actions is not None:
             self.available_actions[0].copy_(self.available_actions[-1])
 
@@ -516,3 +518,102 @@ class SharedReplayBuffer(object):
             yield share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch, \
                   value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, \
                   adv_targ, available_actions_batch, adjcency_matrix_batch, next_obs_batch, edge_index_batch
+
+    def recurrent_generator_transformer(
+        self, advantages, num_mini_batch, data_chunk_length
+    ):
+        """Yield time-major contiguous chunks for truncated BPTT."""
+        episode_length, n_envs, num_agents = self.rewards.shape[:3]
+        chunk_length = int(data_chunk_length)
+        if chunk_length <= 0 or episode_length % chunk_length != 0:
+            raise ValueError(
+                "episode_length must be divisible by data_chunk_length for "
+                "recurrent DGNN training"
+            )
+
+        chunks = [
+            (env_id, start)
+            for env_id in range(n_envs)
+            for start in range(0, episode_length, chunk_length)
+        ]
+        if not chunks:
+            raise ValueError("recurrent PPO produced no trajectory chunks")
+        minibatches = min(max(1, int(num_mini_batch)), len(chunks))
+        permutation = torch.randperm(len(chunks))
+
+        def sequence(field, selected):
+            # [L, B, agents, ...] -> [L * B, agents, ...]
+            values = torch.stack(
+                [field[start : start + chunk_length, env] for env, start in selected],
+                dim=1,
+            )
+            return values.reshape(-1, *field.shape[2:])
+
+        for group in torch.tensor_split(permutation, minibatches):
+            if group.numel() == 0:
+                continue
+            selected = [chunks[index] for index in group.tolist()]
+            batch_chunks = len(selected)
+
+            share_obs = sequence(self.share_obs[:-1], selected)
+            obs = sequence(self.obs[:-1], selected)
+            next_obs = sequence(self.obs[1:], selected)
+            actions = sequence(self.actions, selected)
+            value_preds = sequence(self.value_preds[:-1], selected)
+            returns = sequence(self.returns[:-1], selected)
+            masks = sequence(self.masks[:-1], selected)
+            active_masks = sequence(self.active_masks[:-1], selected)
+            old_action_log_probs = sequence(
+                self.action_log_probs[:-1], selected
+            )
+            adv_targ = sequence(advantages, selected)
+            adjcency_matrix = sequence(
+                self.adjcency_matrix[:-1], selected
+            )
+            edge_index = sequence(self.edge_index[:-1], selected)
+
+            if self.available_actions is not None:
+                available_actions = sequence(
+                    self.available_actions[:-1], selected
+                )
+            else:
+                available_actions = None
+
+            rnn_states = torch.stack(
+                [
+                    self.rnn_states[start, env, :, 0, :]
+                    for env, start in selected
+                ],
+                dim=0,
+            )
+            rnn_states_critic = torch.stack(
+                [
+                    self.rnn_states_critic[start, env, :, 0, :]
+                    for env, start in selected
+                ],
+                dim=0,
+            )
+
+            def flatten_agents(value):
+                return value.reshape(-1, *value.shape[2:])
+
+            yield (
+                flatten_agents(share_obs),
+                flatten_agents(obs),
+                rnn_states.reshape(batch_chunks * num_agents, -1),
+                rnn_states_critic.reshape(batch_chunks * num_agents, -1),
+                flatten_agents(actions),
+                flatten_agents(value_preds),
+                flatten_agents(returns),
+                flatten_agents(masks),
+                flatten_agents(active_masks),
+                flatten_agents(old_action_log_probs),
+                flatten_agents(adv_targ),
+                flatten_agents(available_actions)
+                if available_actions is not None
+                else None,
+                flatten_agents(adjcency_matrix),
+                flatten_agents(next_obs),
+                edge_index,
+                chunk_length,
+            )

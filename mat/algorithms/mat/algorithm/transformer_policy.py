@@ -67,7 +67,10 @@ class TransformerPolicy:
 
         elif self.algorithm_name == "mappo_gnn" or self.algorithm_name == "mappo_dgnn" or self.algorithm_name == 'mappo_dgnn_dsgd':
             from mat.algorithms.mat.algorithm.ma_gnn_transformer_new import MultiAgentGnnTransformer as MAT
-            if args.iterations > 0:
+            if (
+                args.iterations > 0
+                and self.algorithm_name != "mappo_dgnn_dsgd"
+            ):
                 self.obs_dim_ = self.obs_dim+args.n_embd
 
         elif self.algorithm_name in ["ippo", "consensus_ippo"]:
@@ -228,6 +231,45 @@ class TransformerPolicy:
         if available_actions is not None:
             available_actions = available_actions.reshape(-1, self.num_agents, self.act_dim)
 
+        if self.algorithm_name in {
+            "mappo_gnn",
+            "mappo_dgnn",
+            "mappo_dgnn_dsgd",
+        }:
+            actor_states = check(rnn_states_actor).to(**self.tpdv).reshape(
+                -1, self.num_agents, self.n_embd
+            )
+            critic_states = check(rnn_states_critic).to(**self.tpdv).reshape(
+                -1, self.num_agents, self.n_embd
+            )
+            recurrent_masks = check(masks).to(**self.tpdv).reshape(
+                -1, self.num_agents, 1
+            )
+            (
+                actions,
+                action_log_probs,
+                values,
+                actor_states,
+                critic_states,
+            ) = self.transformer.get_actions(
+                cent_obs,
+                obs,
+                available_actions,
+                deterministic,
+                batched_edge_index,
+                rnn_states_actor=actor_states,
+                rnn_states_critic=critic_states,
+                masks=recurrent_masks,
+                return_rnn_states=True,
+            )
+            return (
+                values.view(-1, self.num_quants),
+                actions.view(-1, self.act_num),
+                action_log_probs.view(-1, self.act_num),
+                actor_states.view(-1, self.n_embd),
+                critic_states.view(-1, self.n_embd),
+            )
+
         if self.algorithm_name == "dg_mat":
             actions, action_log_probs, values = self.transformer.get_actions(
                 cent_obs,
@@ -274,7 +316,7 @@ class TransformerPolicy:
         
 
     def get_values(self, cent_obs, obs, rnn_states_critic, masks, available_actions=None,
-                   adjacency_matrix=None):
+                   adjacency_matrix=None, batched_edge_index=None):
         """
         Get value function predictions.
         :param cent_obs (np.ndarray): centralized input to the critic.
@@ -296,6 +338,25 @@ class TransformerPolicy:
                 available_actions,
                 adjacency_matrix=adjacency_matrix,
             )
+        elif self.algorithm_name in {
+            "mappo_gnn",
+            "mappo_dgnn",
+            "mappo_dgnn_dsgd",
+        }:
+            critic_states = check(rnn_states_critic).to(**self.tpdv).reshape(
+                -1, self.num_agents, self.n_embd
+            )
+            recurrent_masks = check(masks).to(**self.tpdv).reshape(
+                -1, self.num_agents, 1
+            )
+            values = self.transformer.get_values(
+                cent_obs,
+                obs,
+                available_actions,
+                rnn_states_critic=critic_states,
+                masks=recurrent_masks,
+                edge_index=batched_edge_index,
+            )
         else:
             values = self.transformer.get_values(cent_obs, obs, available_actions)
 
@@ -305,7 +366,7 @@ class TransformerPolicy:
 
     def evaluate_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, actions, masks,
                          available_actions=None, active_masks=None, agent_id=None, action_hats=None,
-                         adjacency_matrix=None):
+                         adjacency_matrix=None, edge_index=None, sequence_length=1):
         """
         Get action logprobs / entropy and value function predictions for actor update.
         :param cent_obs (np.ndarray): centralized input to the critic.
@@ -337,6 +398,22 @@ class TransformerPolicy:
                 actions,
                 available_actions,
                 adjacency_matrix=adjacency_matrix,
+            )
+        elif self.algorithm_name in {
+            "mappo_gnn",
+            "mappo_dgnn",
+            "mappo_dgnn_dsgd",
+        }:
+            action_log_probs, values, entropy = self.transformer(
+                cent_obs,
+                obs,
+                actions,
+                available_actions,
+                rnn_states_actor=rnn_states_actor,
+                rnn_states_critic=rnn_states_critic,
+                masks=masks,
+                edge_index=edge_index,
+                sequence_length=sequence_length,
             )
         else:
             action_log_probs, values, entropy = self.transformer(
@@ -405,7 +482,9 @@ class TransformerPolicy:
         max_idx = -1
         prefixes = (
             "decoder.mlp_.",
+            "decoder.gru_.",
             "encoder.head_.",
+            "encoder.gru_.",
             "obs_encoder.agent_encoders.",
             "obs_encoder.node_classifier_heads.",
             "actor_local_encoder.agent_encoders.",
@@ -476,6 +555,14 @@ class TransformerPolicy:
             self.transformer.encoder.head_[dst_agent].load_state_dict(
                 self.transformer.encoder.head_[src_agent].state_dict()
             )
+            if self.transformer.use_actor_gru:
+                self.transformer.decoder.gru_[dst_agent].load_state_dict(
+                    self.transformer.decoder.gru_[src_agent].state_dict()
+                )
+            if self.transformer.use_critic_gru:
+                self.transformer.encoder.gru_[dst_agent].load_state_dict(
+                    self.transformer.encoder.gru_[src_agent].state_dict()
+                )
             self.transformer.obs_encoder.agent_encoders[dst_agent].load_state_dict(
                 self.transformer.obs_encoder.agent_encoders[src_agent].state_dict()
             )

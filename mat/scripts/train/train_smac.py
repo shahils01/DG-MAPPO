@@ -309,6 +309,28 @@ def main(args):
         # Make the algorithm name sufficient to select that execution mode.
         all_args.share_policy = False
         all_args.truelyDistributed = True
+        # This method is decentralized by construction.  Neither the critic
+        # nor its recurrent state may consume the global SMAC state.
+        all_args.use_centralized_critic = False
+        all_args.use_centralized_V = False
+
+    recurrent_dgnn = all_args.use_actor_gru or all_args.use_critic_gru
+    if recurrent_dgnn and all_args.algorithm_name != "mappo_dgnn_dsgd":
+        parser.error(
+            "--use_actor_gru and --use_critic_gru are currently supported "
+            "only with --algorithm_name mappo_dgnn_dsgd"
+        )
+    if recurrent_dgnn:
+        if all_args.recurrent_N != 1:
+            parser.error("DGNN GRUs currently require --recurrent_N 1")
+        if all_args.data_chunk_length <= 0:
+            parser.error("--data_chunk_length must be greater than zero")
+        if all_args.episode_length % all_args.data_chunk_length != 0:
+            parser.error(
+                "--episode_length must be divisible by --data_chunk_length "
+                "when a DGNN GRU is enabled"
+            )
+        all_args.use_recurrent_policy = True
 
     if all_args.agent_parallel and all_args.algorithm_name not in {
         "dg_mat",

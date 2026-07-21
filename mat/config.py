@@ -233,6 +233,24 @@ def get_config():
     parser.add_argument("--recurrent_N", type=int, default=1, help="The number of recurrent layers.")
     parser.add_argument("--data_chunk_length", type=int, default=10,
                         help="Time length of chunks used to train a recurrent_policy")
+    parser.add_argument(
+        "--use_actor_gru",
+        action="store_true",
+        default=False,
+        help=(
+            "use a temporal GRU in each decentralized actor; currently "
+            "supported by mappo_dgnn_dsgd"
+        ),
+    )
+    parser.add_argument(
+        "--use_critic_gru",
+        action="store_true",
+        default=False,
+        help=(
+            "use a temporal GRU in each decentralized critic; currently "
+            "supported by mappo_dgnn_dsgd"
+        ),
+    )
 
     # optimizer parameters
     parser.add_argument("--lr", type=float, default=5e-4,

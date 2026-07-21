@@ -252,9 +252,14 @@ class MATTrainer:
 
 
     def ppo_update(self, sample, episode, iter_step, obs_dim=None):
+        if len(sample) == 16:
+            *sample_values, sequence_length = sample
+        else:
+            sample_values = list(sample)
+            sequence_length = 1
         share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch, \
         value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, \
-        adv_targ, available_actions_batch, adjcency_matrix_batch, next_obs_batch, edge_index_batch = sample
+        adv_targ, available_actions_batch, adjcency_matrix_batch, next_obs_batch, edge_index_batch = sample_values
 
         # Convert all inputs to proper device and dtype
         def ensure_tensor(x, target_device=None):
@@ -329,6 +334,8 @@ class MATTrainer:
                 available_actions_batch,
                 active_masks_batch,
                 adjacency_matrix=adjcency_matrix_batch,
+                edge_index=edge_index_batch,
+                sequence_length=sequence_length,
             )
         
         if action_log_probs.shape[-1] != 1:
@@ -375,7 +382,10 @@ class MATTrainer:
                     actor_consensus_loss + critic_consensus_loss
                 )
             else:
-                gnn_consensus_loss = self.adj_gnn_consensus_loss(obs_batch[:,:,self.policy.obs_dim:], adjcency_matrix_batch)
+                gnn_messages = self.policy.transformer.last_gnn_messages
+                gnn_consensus_loss = self.adj_gnn_consensus_loss(
+                    gnn_messages, adjcency_matrix_batch
+                )
             loss = policy_loss - dist_entropy * self.entropy_coef + value_loss * self.value_loss_coef + self.gnn_loss_coef * gnn_consensus_loss 
         else:
             gnn_consensus_loss = torch.zeros(self.num_agents, 1, dtype=torch.float32, device=self.device)
@@ -439,19 +449,30 @@ class MATTrainer:
 
         for _ in range(1):
             if self.policy.algorithm_name == 'mappo_dgnn_dsgd':
+                mixing_adjacency = adjcency_matrix_batch.float().mean(dim=0)
                 if self.policy.transformer.agent_parallel_enabled:
                     self.policy.transformer.mix_agent_parameters(
-                        adjcency_matrix_batch[0]
+                        mixing_adjacency
                     )
                 else:
-                    average_agent_encoders_by_adj(self.policy.transformer.obs_encoder.agent_encoders, adjcency_matrix_batch[0])
-                    average_agent_encoders_by_adj(self.policy.transformer.obs_encoder.node_classifier_heads, adjcency_matrix_batch[0])
-                    average_attention_params_by_adj(self.policy.transformer.obs_encoder.atts, adjcency_matrix_batch[0])
+                    average_agent_encoders_by_adj(self.policy.transformer.obs_encoder.agent_encoders, mixing_adjacency)
+                    average_agent_encoders_by_adj(self.policy.transformer.obs_encoder.node_classifier_heads, mixing_adjacency)
+                    average_attention_params_by_adj(self.policy.transformer.obs_encoder.atts, mixing_adjacency)
 
                     # average_attention_params_by_adj(self.policy.transformer.obs_encoder.hop_atts, adjcency_matrix_batch[0])
                     # average_attention_params_by_adj(self.policy.transformer.obs_encoder.hop_biases, adjcency_matrix_batch[0])
-                    average_agent_encoders_by_adj(self.policy.transformer.encoder.head_, adjcency_matrix_batch[0])
-                    average_agent_encoders_by_adj(self.policy.transformer.decoder.mlp_, adjcency_matrix_batch[0])
+                    average_agent_encoders_by_adj(self.policy.transformer.encoder.head_, mixing_adjacency)
+                    average_agent_encoders_by_adj(self.policy.transformer.decoder.mlp_, mixing_adjacency)
+                    if self.policy.transformer.use_actor_gru:
+                        average_agent_encoders_by_adj(
+                            self.policy.transformer.decoder.gru_,
+                            mixing_adjacency,
+                        )
+                    if self.policy.transformer.use_critic_gru:
+                        average_agent_encoders_by_adj(
+                            self.policy.transformer.encoder.gru_,
+                            mixing_adjacency,
+                        )
 
             elif self.policy.algorithm_name == "dg_mat":
                 mixing_adjacency = adjcency_matrix_batch.float().mean(dim=0)
@@ -527,7 +548,21 @@ class MATTrainer:
         num_updates = 0
 
         for i in range(self.ppo_epoch):
-            data_generator = buffer.feed_forward_generator_transformer(advantages, self.num_mini_batch, mini_batch_size=self.mini_batch_size)
+            recurrent_dgnn = self.policy.algorithm_name == "mappo_dgnn_dsgd" and (
+                self.args.use_actor_gru or self.args.use_critic_gru
+            )
+            if recurrent_dgnn:
+                data_generator = buffer.recurrent_generator_transformer(
+                    advantages,
+                    self.num_mini_batch,
+                    self.data_chunk_length,
+                )
+            else:
+                data_generator = buffer.feed_forward_generator_transformer(
+                    advantages,
+                    self.num_mini_batch,
+                    mini_batch_size=self.mini_batch_size,
+                )
 
             for sample in data_generator:
                 num_updates += 1

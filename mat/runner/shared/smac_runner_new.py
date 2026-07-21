@@ -33,7 +33,7 @@ class SMACRunner(Runner):
     def get_batch_edge_index(self, edge_index):
         """
         Converts a padded multi-environment edge index into a single batched edge index.
-        
+
         Args:
             edge_index: Padded tensor of shape [batch_size, 2, max_edges]
                     (invalid edges marked with -1 in the 2nd row).
@@ -103,13 +103,24 @@ class SMACRunner(Runner):
                 dones = torch.tensor(dones, dtype=torch.float32, device=self.device)
                 available_actions = torch.tensor(available_actions, dtype=torch.float32, device=self.device)
 
+                next_edge_index = edge_index
+                next_batch_edge_index = batch_edge_index
+                next_adjcency_matrix = adjcency_matrix
                 if self.algorithm_name in GRAPH_ALGORITHMS and self.algorithm_name != "dg_mat":
-                    edge_index = self.envs.get_edge_index_matrix()
-                    edge_index = torch.tensor(edge_index, dtype=torch.float32, device=self.device)
-                    batch_edge_index = self.get_batch_edge_index(edge_index)
+                    next_edge_index = self.envs.get_edge_index_matrix()
+                    next_edge_index = torch.tensor(
+                        next_edge_index, dtype=torch.float32, device=self.device
+                    )
+                    next_batch_edge_index = self.get_batch_edge_index(
+                        next_edge_index
+                    )
 
-                    adjcency_matrix = self.envs.get_visibility_matrix()[:,:,:self.num_agents]
-                    adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device=self.device)
+                    next_adjcency_matrix = self.envs.get_visibility_matrix()[:,:,:self.num_agents]
+                    next_adjcency_matrix = torch.tensor(
+                        next_adjcency_matrix,
+                        dtype=torch.float32,
+                        device=self.device,
+                    )
                                                 
                 data = obs, share_obs, rewards, dones, infos, available_actions, \
                        values, actions, action_log_probs, \
@@ -117,6 +128,21 @@ class SMACRunner(Runner):
                 
                 # insert data into buffer
                 self.insert(data, batch_edge_index, edge_index, adjcency_matrix)
+
+                if self.algorithm_name in GRAPH_ALGORITHMS and self.algorithm_name != "dg_mat":
+                    # The transition at buffer index t is paired with the graph
+                    # that produced action_t.  Also retain graph_{t+1} for the
+                    # next action and final critic bootstrap.
+                    self.buffer.copy_into(
+                        self.buffer.edge_index[step + 1], next_edge_index
+                    )
+                    self.buffer.copy_into(
+                        self.buffer.adjcency_matrix[step + 1],
+                        next_adjcency_matrix,
+                    )
+                    edge_index = next_edge_index
+                    batch_edge_index = next_batch_edge_index
+                    adjcency_matrix = next_adjcency_matrix
 
                 # DG-MAT stores the graph that generated the current action,
                 # then obtains the next graph for the next observation and the
@@ -135,7 +161,10 @@ class SMACRunner(Runner):
             self.compute(
                 adjacency_matrix=adjcency_matrix
                 if self.algorithm_name == "dg_mat"
-                else None
+                else None,
+                batched_edge_index=batch_edge_index
+                if self.algorithm_name in GNN_ALGORITHMS
+                else None,
             )
             train_infos = self.train(episode)
             
@@ -204,34 +233,39 @@ class SMACRunner(Runner):
                 self.buffer.adjcency_matrix[0], adjcency_matrix
             )
 
-        if self.all_args.iterations > 0:
-            if self.algorithm_name in GNN_ALGORITHMS:
+        if self.algorithm_name in GNN_ALGORITHMS:
+            adjcency_matrix = self.envs.get_visibility_matrix()[:,:,:self.num_agents]
+            adjcency_matrix = torch.tensor(
+                adjcency_matrix, dtype=torch.float32, device=self.device
+            )
+            edge_index = self.envs.get_edge_index_matrix()
+            edge_index = torch.tensor(
+                edge_index, dtype=torch.float32, device=self.device
+            )
+            self.buffer.copy_into(
+                self.buffer.adjcency_matrix[0], adjcency_matrix
+            )
+            self.buffer.copy_into(self.buffer.edge_index[0], edge_index)
+
+            if (
+                self.algorithm_name != "mappo_dgnn_dsgd"
+                and self.all_args.iterations > 0
+            ):
+                # Preserve the legacy detached-feature contract for the other
+                # GNN algorithms. MAPPO-DGNN-DSGD keeps raw observations so
+                # its graph encoder and temporal GRUs train end to end.
                 self.buffer.obs = self.buffer._zeros(
                     self.episode_length + 1,
                     self.n_rollout_threads,
                     self.num_agents,
                     self.obs_dim + self.n_embd,
                 )
-
-                print('obs shape = ', obs.shape)
-
-                adjcency_matrix = self.envs.get_visibility_matrix()[:,:,:self.num_agents]
-                adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device=self.device)
-                
-                edge_index = self.envs.get_edge_index_matrix()
-                edge_index = torch.tensor(edge_index, dtype=torch.float32, device=self.device)
                 batch_edge_index = self.get_batch_edge_index(edge_index)
-                
                 with torch.no_grad():
-                    x = self.trainer.policy.transformer.obs_encoder(
+                    encoded_obs = self.trainer.policy.transformer.obs_encoder(
                         obs, batch_edge_index
                     )
-
-                obs = torch.cat([obs,x],dim=-1).detach()
-
-                self.buffer.copy_into(
-                    self.buffer.adjcency_matrix[0], adjcency_matrix
-                )
+                obs = torch.cat((obs, encoded_obs), dim=-1)
             
         # replay buffer
         if not self.use_centralized_V:
@@ -271,14 +305,17 @@ class SMACRunner(Runner):
     def insert(self, data, batched_edge_index=None, edge_index=None, adjcency_matrix=None):
         obs, share_obs, rewards, dones, infos, available_actions, \
         values, actions, action_log_probs, rnn_states, rnn_states_critic = data
-        
-        if self.all_args.iterations > 0:
-            if self.algorithm_name in GNN_ALGORITHMS:
-                with torch.no_grad():
-                    x = self.trainer.policy.transformer.obs_encoder(
-                        obs, batched_edge_index
-                    )
-                obs = torch.cat([obs,x],dim=-1).detach()
+
+        if (
+            self.algorithm_name in GNN_ALGORITHMS
+            and self.algorithm_name != "mappo_dgnn_dsgd"
+            and self.all_args.iterations > 0
+        ):
+            with torch.no_grad():
+                encoded_obs = self.trainer.policy.transformer.obs_encoder(
+                    obs, batched_edge_index
+                )
+            obs = torch.cat((obs, encoded_obs), dim=-1)
 
         dones_env = torch.all(dones, dim=1)
 
@@ -348,11 +385,11 @@ class SMACRunner(Runner):
                     batch_edge_index = self.get_batch_edge_index(edge_index)
 
                     avg_node_degree = batch_edge_index.shape[1]/self.num_agents
-            
-                    x = self.trainer.policy.transformer.obs_encoder(eval_obs, batch_edge_index)
-
-                    eval_obs = torch.cat([eval_obs,x],dim=-1).detach()
-                    # eval_obs = eval_obs.cpu().detach().numpy()
+                    if self.algorithm_name != "mappo_dgnn_dsgd":
+                        x = self.trainer.policy.transformer.obs_encoder(
+                            eval_obs, batch_edge_index
+                        )
+                        eval_obs = torch.cat((eval_obs, x), dim=-1)
 
             if self.algorithm_name == "dg_mat":
                 adjcency_matrix = self.eval_envs.get_visibility_matrix()[:, :, :self.num_agents]
