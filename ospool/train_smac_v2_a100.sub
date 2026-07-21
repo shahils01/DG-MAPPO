@@ -22,9 +22,10 @@ transfer_executable = YES
 transfer_input_files = mat
 transfer_output_files = mat/scripts/results
 
-# train_smac_v2.sh starts 32 parallel SMACv2 rollout environments.
-request_cpus   = 32
-request_memory = 64GB
+# Match the requested Slurm allocation. Note that the training code still uses
+# its default 32 rollout environments, so they share these 16 CPU cores.
+request_cpus   = 16
+request_memory = 100GB
 request_disk   = 20GB
 
 request_gpus = 1
