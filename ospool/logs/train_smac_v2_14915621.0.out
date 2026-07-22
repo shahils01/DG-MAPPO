@@ -1,0 +1,38 @@
+Host: gpu024
+Working directory: /srv/scratch
+CUDA_VISIBLE_DEVICES: GPU-63f1f760-54aa-cb2c-a37e-e434793fec4e
+Tue Jul 21 18:19:10 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.43.02              KMD Version: 610.43.02     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA RTX PRO 6000 Blac...    On  |   00000001:C5:00.0 Off |                    0 |
+| N/A   32C    P8             33W /  450W |       3MiB /  97887MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+PyTorch: 2.4.1+cu121
+CUDA runtime: 12.1
+GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition
+SMACv2: /opt/conda/lib/python3.11/site-packages/smacv2/__init__.py
+env is smacv2, map is protoss, algo is mappo_dgnn_dsgd, exp is mappo_dgnn_dsgd, seed is 0
+SMACv2 config: /srv/scratch/mat/envs/smacv2/smacv2/examples/configs/sc2_gen_protoss.yaml
+SMACv2 scenario: protoss_5_vs_5, map=10gen_protoss, prob_obs_enemy=1.0, action_mask=True, force_connected_graph=False
+choose to use gpu...
+config =  {'all_args': Namespace(algorithm_name='mappo_dgnn_dsgd', experiment_name='mappo_dgnn_dsgd', seed=0, cuda=True, cuda_deterministic=True, n_training_threads=1, n_rollout_threads=32, buffer_device='cpu', disable_buffer_pin_memory=False, n_eval_rollout_threads=1, n_render_rollout_threads=1, num_env_steps=40000000, user_name='shahil-shaik7-clemson-university', use_wandb=True, env_name='smacv2', use_obs_instead_of_state=False, episode_length=200, share_policy=False, use_centralized_V=False, use_centralized_critic=False, stacked_frames=1, use_stacked_frames=False, layer_N=2, use_ReLU=True, use_popart=False, use_valuenorm=True, use_feature_normalization=True, use_orthogonal=True, gain=0.01, use_naive_recurrent_policy=False, use_recurrent_policy=True, recurrent_N=1, data_chunk_length=20, use_actor_gru=True, use_critic_gru=True, lr=0.0005, critic_lr=0.0005, opti_eps=1e-05, weight_decay=0, ppo_epoch=10, use_clipped_value_loss=True, clip_param=0.05, num_mini_batch=1, mini_batch_size=1024, entropy_coef=0.01, gnn_loss_coef=1, consensus_tau=1.0, consensus_steps=1, consensus_reward_mode='env', value_loss_coef=1, use_max_grad_norm=True, max_grad_norm=10.0, use_gae=True, gamma=0.99, gae_lambda=0.95, use_proper_time_limits=False, use_huber_loss=True, use_value_active_masks=True, use_policy_active_masks=True, huber_delta=10.0, use_linear_lr_decay=False, save_interval=100000, log_interval=5, use_eval=True, eval_interval=25, eval_episodes=32, save_gifs=True, use_render=False, render_episodes=5, ifi=0.1, model_dir=None, encode_state=False, n_block=1, n_embd=64, n_head=1, dec_actor=False, share_actor=False, dg_mat_dropout=0.0, dg_mat_ff_mult=2, dg_mat_obs_tokens=8, agent_parallel=False, agent_parallel_devices=None, dg_mat_agent_parallel=False, dg_mat_devices=None, train_maps=None, eval_maps=None, n_quants=1, iterations=5, num_layers=3, dropout=0.7, add_dropout=0, num_heads=1, lambd_gnn=1.0, alpha=0.1, lambd_l2=0, use_CNN_for_pi=False, use_VAE_for_pi=True, out_channels=128, kernel_size=6, truelyDistributed=True, consensusLoss=True, avg_critic=False, detach=False, sight_range=9.0, meanGNN=True, dgn_hidden_dim=128, dgn_num_layers=2, dgn_num_heads=4, dgn_buffer_size=100000, dgn_batch_size=256, dgn_warmup_steps=1000, dgn_updates_per_step=1, dgn_target_tau=0.01, dgn_epsilon_start=1.0, dgn_epsilon_end=0.05, dgn_epsilon_decay_steps=50000, dgn_action_noise=0.2, dgn_action_noise_end=0.05, dgn_relation_reg_coef=0.01, dgn_actor_lr=0.0005, dgn_critic_lr=0.0005, dgn_action_scale=1.0, map_name='protoss_5_vs_5', eval_map_name='protoss_5_vs_5', smacv2_config='protoss', smacv2_n_units=None, smacv2_n_enemies=None, smacv2_prob_obs_enemy=None, smacv2_action_mask=None, smacv2_comm_range=None, smacv2_force_connected_graph=False, unit_sight_range=4.0, share_enemy_info_with_neighbors=False, strict_attack_visibility=True, run_dir=PosixPath('/srv/scratch/mat/scripts/results/smacv2/protoss_5_vs_5/mappo_dgnn_dsgd/mappo_dgnn_dsgd'), add_move_state=False, add_local_obs=False, add_distance_state=False, add_enemy_action_state=False, add_agent_id=False, add_visible_state=False, add_xy_state=False, use_state_agent=True, use_mustalive=True, add_center_xy=True, random_agent_order=False, strict_local_obs=True, smac_worker_timeout=120.0, smacv2_map_name='10gen_protoss'), 'envs': <mat.envs.env_wrappers.ShareSubprocVecEnv object at 0x14ee88e1fd90>, 'eval_envs': <mat.envs.env_wrappers.ShareSubprocVecEnv object at 0x14ee892b1a50>, 'num_agents': 5, 'device': device(type='cuda', index=0), 'run_dir': PosixPath('/srv/scratch/mat/scripts/results/smacv2/protoss_5_vs_5/mappo_dgnn_dsgd/mappo_dgnn_dsgd')}
+n_agent =  5
+action_dim =  11
+obs_dim =  92
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mmappo_dgnn_dsgd_ablation_seed0[0m at: [34mhttps://wandb.ai/shahil-shaik7-clemson-university/protoss_5_vs_5_journal_new/runs/v6wbvt64[0m
+[1;34mwandb[0m: Find logs at: [1;35mresults/smacv2/protoss_5_vs_5/mappo_dgnn_dsgd/mappo_dgnn_dsgd/wandb/run-20260721_181914-v6wbvt64/logs[0m

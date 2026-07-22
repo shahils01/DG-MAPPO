@@ -1,0 +1,50 @@
+/opt/conda/lib/python3.11/site-packages/torch/cuda/__init__.py:230: UserWarning: 
+NVIDIA RTX PRO 6000 Blackwell Server Edition with CUDA capability sm_120 is not compatible with the current PyTorch installation.
+The current PyTorch install supports CUDA capabilities sm_50 sm_60 sm_70 sm_75 sm_80 sm_86 sm_90.
+If you want to use the NVIDIA RTX PRO 6000 Blackwell Server Edition GPU with PyTorch, please check the instructions at https://pytorch.org/get-started/locally/
+
+  warnings.warn(
+/opt/conda/lib/python3.11/site-packages/pydantic/_internal/_generate_schema.py:2274: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+  warnings.warn(
+/opt/conda/lib/python3.11/site-packages/pydantic/_internal/_generate_schema.py:2274: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+  warnings.warn(
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+Users of this version of Gym should be able to simply replace 'import gym' with 'import gymnasium as gym' in the vast majority of cases.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+/opt/conda/lib/python3.11/site-packages/torch/cuda/__init__.py:230: UserWarning: 
+NVIDIA RTX PRO 6000 Blackwell Server Edition with CUDA capability sm_120 is not compatible with the current PyTorch installation.
+The current PyTorch install supports CUDA capabilities sm_50 sm_60 sm_70 sm_75 sm_80 sm_86 sm_90.
+If you want to use the NVIDIA RTX PRO 6000 Blackwell Server Edition GPU with PyTorch, please check the instructions at https://pytorch.org/get-started/locally/
+
+  warnings.warn(
+wandb: Currently logged in as: shahil-shaik7 (i2rLAB) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Using a boolean value for 'reinit' is deprecated. Use 'return_previous' or 'finish_previous' instead.
+wandb: Tracking run with wandb version 0.21.1
+wandb: Run data is saved locally in /srv/scratch/mat/scripts/results/smacv2/protoss_5_vs_5/mappo_dgnn_dsgd/mappo_dgnn_dsgd/wandb/run-20260721_181914-v6wbvt64
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run mappo_dgnn_dsgd_ablation_seed0
+wandb: ⭐️ View project at https://wandb.ai/shahil-shaik7-clemson-university/protoss_5_vs_5_journal_new
+wandb: 🚀 View run at https://wandb.ai/shahil-shaik7-clemson-university/protoss_5_vs_5_journal_new/runs/v6wbvt64
+Traceback (most recent call last):
+  File "/srv/scratch/mat/scripts/train/train_smac.py", line 479, in <module>
+    main(sys.argv[1:])
+  File "/srv/scratch/mat/scripts/train/train_smac.py", line 461, in main
+    runner = runner_cls(config)
+             ^^^^^^^^^^^^^^^^^^
+  File "/srv/scratch/mat/scripts/../../mat/runner/shared/smac_runner_new.py", line 21, in __init__
+    super(SMACRunner, self).__init__(config)
+  File "/srv/scratch/mat/scripts/../../mat/runner/shared/base_runner.py", line 98, in __init__
+    self.policy = Policy(self.all_args,
+                  ^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/scratch/mat/scripts/../../mat/algorithms/mat/algorithm/transformer_policy.py", line 92, in __init__
+    self.transformer = MAT(args, self.share_obs_dim, self.obs_dim, self.act_dim, num_agents,
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/scratch/mat/scripts/../../mat/algorithms/mat/algorithm/ma_gnn_transformer_new.py", line 353, in __init__
+    self.eye = torch.eye(self.n_agent, device=device).unsqueeze(0)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: CUDA error: no kernel image is available for execution on the device
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+

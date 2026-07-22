@@ -31,6 +31,7 @@ request_disk   = 20GB
 request_gpus = 1
 # Accept any GPU meeting these capability and memory requirements.
 gpus_minimum_capability = 8.0
+gpus_maximum_capability = 9.0
 gpus_minimum_memory = 20GB
 
 +JobDurationCategory = "Medium"
