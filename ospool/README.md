@@ -1,8 +1,8 @@
 # OSPool SMACv2 training
 
-`train_smac_v2_a100.sub` requests one NVIDIA A100 and launches the existing
-`mat/scripts/train_smac_v2.sh` file. Submit it from the repository root, not
-from the `ospool` directory.
+`train_smac_v2_a100.sub` requests one compatible NVIDIA GPU and launches the
+existing `mat/scripts/train_smac_v2.sh` file. Submit it from the repository
+root, not from the `ospool` directory.
 
 ## Required container
 
@@ -91,6 +91,15 @@ On `ap40`:
 cd ~/DG-MAPPO
 chmod +x mat/scripts/train_smac_v2.sh ospool/run_train_smac_v2.sh
 mkdir -p ospool/logs
+
+# Run this once. The ignored credential file is reused by later submissions.
+umask 077
+read -rsp "W&B API key: " WANDB_KEY
+printf '\n'
+printf '%s\n' "${WANDB_KEY}" > ospool/.wandb_api_key
+unset WANDB_KEY
+chmod 600 ospool/.wandb_api_key
+
 condor_submit ospool/train_smac_v2_a100.sub
 condor_watch_q
 ```
@@ -109,10 +118,12 @@ tail -n 100 ospool/logs/train_smac_v2_JOB_ID.*
 ```
 
 Successful and partial results are transferred back into
-`mat/scripts/results`. A100-only matching can substantially increase queue
-time. To permit other Ampere-or-newer GPUs, remove the `require_gpus` line but
-keep `gpus_minimum_capability = 8.0`.
+`mat/scripts/results`. The capability range accepts CUDA-12.1-compatible
+Ampere, Ada, and Hopper GPUs while excluding Blackwell GPUs that the current
+PyTorch 2.4.1 image cannot execute on.
 
-The existing launcher enables Weights & Biases. The job records W&B data in
-offline mode unless `WANDB_API_KEY` is securely provided to the job; do not
-commit or bake that API key into the repository or container image.
+The launcher enables online Weights & Biases logging. The submit file transfers
+the ignored `ospool/.wandb_api_key` credential directly into the job sandbox,
+and the wrapper loads it automatically. Create that file once on AP40 as shown
+above; do not commit it, upload it to OSDF, bake it into the container, or share
+it in logs.

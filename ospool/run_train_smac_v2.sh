@@ -44,12 +44,26 @@ print(f"GPU: {torch.cuda.get_device_name(0)}")
 print(f"SMACv2: {smacv2.__file__}")
 PY
 
-# The launcher enables W&B. Avoid aborting an otherwise valid batch job when
-# no credential was provisioned in the container/job environment.
+# The submit file transfers ospool/.wandb_api_key. Depending on the HTCondor
+# file-transfer layout, a single transferred file may arrive at the sandbox
+# root or retain its relative path, so accept either location.
 if [[ -z "${WANDB_API_KEY:-}" ]]; then
-  export WANDB_MODE=offline
-  echo "WANDB_API_KEY is unset; recording the W&B run offline."
+  for wandb_key_file in .wandb_api_key ospool/.wandb_api_key; do
+    if [[ -s "${wandb_key_file}" ]]; then
+      WANDB_API_KEY="$(tr -d '\r\n' < "${wandb_key_file}")"
+      export WANDB_API_KEY
+      break
+    fi
+  done
 fi
+
+if [[ -z "${WANDB_API_KEY:-}" ]]; then
+  echo "ERROR: the transferred W&B API key is missing or empty." >&2
+  exit 14
+fi
+
+export WANDB_MODE=online
+echo "W&B online logging enabled."
 
 cd mat/scripts
 exec bash train_smac_v2.sh

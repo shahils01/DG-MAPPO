@@ -13,6 +13,9 @@ __pycache__/
 venv/
 env/
 
+# OSPool job secret; create only on the AP40 access point.
+ospool/.wandb_api_key
+
 # Build and packaging artifacts
 build/
 dist/
