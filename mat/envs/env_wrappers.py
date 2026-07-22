@@ -364,6 +364,26 @@ def shareworker(remote, parent_remote, env_fn_wrapper):
         elif cmd == 'get_visibility_matrix':
             visibility_matrix = _unwrap_env(env).get_visibility_matrix()
             remote.send((visibility_matrix))
+        elif cmd == 'get_agent_communication_topology':
+            target = _unwrap_env(env)
+            if hasattr(target, "get_agent_communication_matrix"):
+                adjacency = target.get_agent_communication_matrix()
+            else:
+                adjacency = target.get_visibility_matrix()[:, :target.n_agents]
+
+            if hasattr(target, "get_alive_agent_ids"):
+                alive_ids = target.get_alive_agent_ids()
+            elif hasattr(target, "_alive_agent_ids"):
+                alive_ids = target._alive_agent_ids()
+            else:
+                alive_ids = [
+                    agent_id
+                    for agent_id in range(target.n_agents)
+                    if target.get_unit_by_id(agent_id).health > 0
+                ]
+            alive_mask = np.zeros(target.n_agents, dtype=np.bool_)
+            alive_mask[alive_ids] = True
+            remote.send((adjacency, alive_mask))
         elif cmd == 'reset_task':
             ob = _unwrap_env(env).reset_task()
             remote.send(ob)
@@ -495,6 +515,14 @@ class ShareSubprocVecEnv(ShareVecEnv):
         visibility_matrix = list(zip(*results))
 
         return np.stack(visibility_matrix).transpose(1,0,2)
+
+    def get_agent_communication_topology(self):
+        """Return repaired ally adjacencies and alive-agent masks."""
+        for remote in self.remotes:
+            remote.send(('get_agent_communication_topology', None))
+        results = self._recv_all("get_agent_communication_topology")
+        adjacencies, alive_masks = zip(*results)
+        return np.stack(adjacencies), np.stack(alive_masks)
 
     def reset_task(self):
         for remote in self.remotes:

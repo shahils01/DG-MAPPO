@@ -927,8 +927,13 @@ class StarCraft2Env(MultiAgentEnv):
         return 6
 
     def unit_sight_range(self, agent_id):
-        """Returns the sight range for an agent."""
+        """Returns the configurable ally communication/visibility range."""
         return self._unit_sight_range
+
+    def unit_enemy_sight_range(self, agent_id):
+        """Returns the standard SMAC enemy observation range."""
+        del agent_id
+        return 9
 
     def unit_max_cooldown(self, unit):
         """Returns the maximal cooldown for a unit."""
@@ -1072,7 +1077,8 @@ class StarCraft2Env(MultiAgentEnv):
         if unit.health > 0:  # otherwise dead, return all zeros
             x = unit.pos.x
             y = unit.pos.y
-            sight_range = self.unit_sight_range(agent_id)
+            ally_sight_range = self.unit_sight_range(agent_id)
+            enemy_sight_range = self.unit_enemy_sight_range(agent_id)
 
             # Movement features
             avail_actions = self.get_avail_agent_actions(agent_id)
@@ -1106,9 +1112,9 @@ class StarCraft2Env(MultiAgentEnv):
                 if enemy_observed:
                     # Sight range > shoot range
                     enemy_feats[e_id, 0] = avail_actions[self.n_actions_no_attack + e_id]  # available
-                    enemy_feats[e_id, 1] = dist / sight_range  # distance
-                    enemy_feats[e_id, 2] = (e_x - x) / sight_range  # relative X
-                    enemy_feats[e_id, 3] = (e_y - y) / sight_range  # relative Y
+                    enemy_feats[e_id, 1] = dist / enemy_sight_range  # distance
+                    enemy_feats[e_id, 2] = (e_x - x) / enemy_sight_range  # relative X
+                    enemy_feats[e_id, 3] = (e_y - y) / enemy_sight_range  # relative Y
 
                     ind = 4
                     if self.obs_all_health:
@@ -1134,9 +1140,9 @@ class StarCraft2Env(MultiAgentEnv):
 
                 if communication_matrix[agent_id, al_id] and al_unit.health > 0:
                     ally_feats[i, 0] = 1  # visible
-                    ally_feats[i, 1] = dist / sight_range  # distance
-                    ally_feats[i, 2] = (al_x - x) / sight_range  # relative X
-                    ally_feats[i, 3] = (al_y - y) / sight_range  # relative Y
+                    ally_feats[i, 1] = dist / ally_sight_range  # distance
+                    ally_feats[i, 2] = (al_x - x) / ally_sight_range  # relative X
+                    ally_feats[i, 3] = (al_y - y) / ally_sight_range  # relative Y
 
                     ally_id_feats[al_id] = 1
 
@@ -1272,7 +1278,8 @@ class StarCraft2Env(MultiAgentEnv):
         unit = self.get_unit_by_id(agent_id)# get the unit of some agent 
         x = unit.pos.x
         y = unit.pos.y
-        sight_range = self.unit_sight_range(agent_id)
+        ally_sight_range = self.unit_sight_range(agent_id)
+        enemy_sight_range = self.unit_enemy_sight_range(agent_id)
         avail_actions = self.get_avail_agent_actions(agent_id) 
 
         if (self.use_mustalive and unit.health > 0) or (not self.use_mustalive): # or else all zeros
@@ -1321,14 +1328,14 @@ class StarCraft2Env(MultiAgentEnv):
                     if unit.health > 0:
                         ind += self.unit_type_bits
                         if self.add_distance_state:
-                            ally_state[al_id, ind] = dist / sight_range  # distance
+                            ally_state[al_id, ind] = dist / ally_sight_range  # distance
                             ind += 1
                         if self.add_xy_state:
-                            ally_state[al_id, ind] = (al_x - x) / sight_range  # relative X
-                            ally_state[al_id, ind + 1] = (al_y - y) / sight_range  # relative Y
+                            ally_state[al_id, ind] = (al_x - x) / ally_sight_range  # relative X
+                            ally_state[al_id, ind + 1] = (al_y - y) / ally_sight_range  # relative Y
                             ind += 2
                         if self.add_visible_state:
-                            if dist < sight_range:
+                            if dist < ally_sight_range:
                                 ally_state[al_id, ind] = 1 # visible
                             ind += 1
                         if self.state_last_action:
@@ -1360,14 +1367,14 @@ class StarCraft2Env(MultiAgentEnv):
                     if unit.health > 0:
                         ind += self.unit_type_bits
                         if self.add_distance_state:
-                            enemy_state[e_id, ind] = dist / sight_range  # distance
+                            enemy_state[e_id, ind] = dist / enemy_sight_range  # distance
                             ind += 1
                         if self.add_xy_state:
-                            enemy_state[e_id, ind] = (e_x - x) / sight_range  # relative X
-                            enemy_state[e_id, ind + 1] = (e_y - y) / sight_range  # relative Y
+                            enemy_state[e_id, ind] = (e_x - x) / enemy_sight_range  # relative X
+                            enemy_state[e_id, ind + 1] = (e_y - y) / enemy_sight_range  # relative Y
                             ind += 2
                         if self.add_visible_state:
-                            if dist < sight_range:
+                            if dist < enemy_sight_range:
                                 enemy_state[e_id, ind] = 1 # visible
                             ind += 1
                         if self.add_enemy_action_state:
@@ -1448,7 +1455,8 @@ class StarCraft2Env(MultiAgentEnv):
         if (self.use_mustalive and unit.health > 0) or (not self.use_mustalive):  # otherwise dead, return all zeros
             x = unit.pos.x
             y = unit.pos.y
-            sight_range = self.unit_sight_range(agent_id)
+            ally_sight_range = self.unit_sight_range(agent_id)
+            enemy_sight_range = self.unit_enemy_sight_range(agent_id)
 
             # Movement features
             avail_actions = self.get_avail_agent_actions(agent_id)
@@ -1474,10 +1482,10 @@ class StarCraft2Env(MultiAgentEnv):
                     # Sight range > shoot range
                     if unit.health > 0:
                         enemy_feats[e_id, 0] = avail_actions[self.n_actions_no_attack + e_id]  # available
-                        enemy_feats[e_id, 1] = dist / sight_range  # distance
-                        enemy_feats[e_id, 2] = (e_x - x) / sight_range  # relative X
-                        enemy_feats[e_id, 3] = (e_y - y) / sight_range  # relative Y
-                        if dist < sight_range:
+                        enemy_feats[e_id, 1] = dist / enemy_sight_range  # distance
+                        enemy_feats[e_id, 2] = (e_x - x) / enemy_sight_range  # relative X
+                        enemy_feats[e_id, 3] = (e_y - y) / enemy_sight_range  # relative Y
+                        if dist < enemy_sight_range:
                             enemy_feats[e_id, 4] = 1  # visible
 
                     ind = 5
@@ -1510,11 +1518,11 @@ class StarCraft2Env(MultiAgentEnv):
 
                 if al_unit.health > 0:  # visible and alive
                     if unit.health > 0:
-                        if dist < sight_range:
+                        if dist < ally_sight_range:
                             ally_feats[i, 0] = 1  # visible
-                        ally_feats[i, 1] = dist / sight_range  # distance
-                        ally_feats[i, 2] = (al_x - x) / sight_range  # relative X
-                        ally_feats[i, 3] = (al_y - y) / sight_range  # relative Y
+                        ally_feats[i, 1] = dist / ally_sight_range  # distance
+                        ally_feats[i, 2] = (al_x - x) / ally_sight_range  # relative X
+                        ally_feats[i, 3] = (al_y - y) / ally_sight_range  # relative Y
 
                     if (self.map_type == "MMM" and al_unit.unit_type == self.medivac_id):
                         ally_feats[i, 4] = al_unit.energy / max_cd  # energy
@@ -1832,7 +1840,7 @@ class StarCraft2Env(MultiAgentEnv):
             return False
 
         dist = self.distance(agent.pos.x, agent.pos.y, enemy.pos.x, enemy.pos.y)
-        return dist < self.unit_sight_range(agent_id)
+        return dist < self.unit_enemy_sight_range(agent_id)
 
     def get_enemy_observer_ids(self, agent_id, communication_matrix):
         """Return agents whose direct sightings feed ``agent_id``'s observation."""
@@ -1848,7 +1856,7 @@ class StarCraft2Env(MultiAgentEnv):
             return False
         if not self.strict_attack_visibility:
             return True
-        return distance < self.unit_sight_range(agent_id)
+        return distance < self.unit_enemy_sight_range(agent_id)
 
     def get_agent_communication_matrix(self):
         """Returns a connected undirected communication graph over alive agents."""

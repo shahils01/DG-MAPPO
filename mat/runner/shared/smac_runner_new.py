@@ -8,6 +8,7 @@ from torch import Tensor
 from mat.runner.shared.base_runner import Runner
 import torch.nn.functional as F
 from collections import defaultdict
+from mat.utils.graph_utils import assert_connected_ally_topologies
 
 def _t2n(x):
     return x.detach().cpu().numpy()
@@ -25,6 +26,14 @@ class SMACRunner(Runner):
         self.disconnected_net = 0
         self._use_max_grad_norm = self.all_args.use_max_grad_norm
         self.max_grad_norm = self.all_args.max_grad_norm
+        self.validate_mat_dec_topology = (
+            self.algorithm_name == "mat_dec"
+            and self.all_args.env_name.lower() == "starcraft2"
+        )
+
+    def validate_ally_communication(self, envs):
+        adjacencies, alive_masks = envs.get_agent_communication_topology()
+        assert_connected_ally_topologies(adjacencies, alive_masks)
 
     def run2(self):
         for episode in range(1):
@@ -84,6 +93,11 @@ class SMACRunner(Runner):
                 adjcency_matrix = torch.tensor(adjcency_matrix, dtype=torch.float32, device=self.device)
 
             for step in range(self.episode_length):
+                if self.validate_mat_dec_topology:
+                    # Construct and validate the same repaired topology used by
+                    # graph algorithms, without passing it into MAT-Dec.
+                    self.validate_ally_communication(self.envs)
+
                 # Sample actions
                 if self.algorithm_name in GNN_ALGORITHMS:
                     values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step, batch_edge_index)
@@ -378,6 +392,9 @@ class SMACRunner(Runner):
         eval_masks = torch.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=torch.float32, device=self.device)
 
         while True:
+            if self.validate_mat_dec_topology:
+                self.validate_ally_communication(self.eval_envs)
+
             if self.all_args.iterations > 0:
                 if self.algorithm_name in GNN_ALGORITHMS:
                     edge_index = self.eval_envs.get_edge_index_matrix()

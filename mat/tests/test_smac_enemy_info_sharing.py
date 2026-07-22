@@ -1,5 +1,6 @@
 import os
 import unittest
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -7,6 +8,7 @@ import numpy as np
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
 from mat.envs.starcraft2.StarCraft2_Env import StarCraft2Env
+from mat.utils.graph_utils import assert_connected_ally_topologies
 
 
 class SMACEnemyInfoSharingTest(unittest.TestCase):
@@ -43,13 +45,26 @@ class SMACEnemyInfoSharingTest(unittest.TestCase):
         self.assertFalse(strict_visibility[0, 2])
         self.assertTrue(strict_visibility[1, 2])
 
-    def test_strict_attack_visibility_clamps_shooting_range_to_sight(self):
+    def test_enemy_visibility_uses_standard_range_not_ally_range(self):
+        env = StarCraft2Env.__new__(StarCraft2Env)
+        env._unit_sight_range = 2.0
+        ally = SimpleNamespace(health=1, pos=SimpleNamespace(x=0.0, y=0.0))
+        enemy = SimpleNamespace(health=1, pos=SimpleNamespace(x=8.0, y=0.0))
+        env.get_unit_by_id = lambda agent_id: ally
+        env.enemies = {0: enemy}
+
+        self.assertEqual(env.unit_sight_range(0), 2.0)
+        self.assertTrue(env.is_enemy_visible_to_agent(0, 0))
+        enemy.pos.x = 9.0
+        self.assertFalse(env.is_enemy_visible_to_agent(0, 0))
+
+    def test_strict_attack_visibility_uses_enemy_sight_range(self):
         env = StarCraft2Env.__new__(StarCraft2Env)
         env._unit_sight_range = 2.0
         env.strict_attack_visibility = True
 
         self.assertTrue(env.target_is_action_visible(0, 1.5, 6.0))
-        self.assertFalse(env.target_is_action_visible(0, 3.0, 6.0))
+        self.assertTrue(env.target_is_action_visible(0, 3.0, 6.0))
         self.assertFalse(env.target_is_action_visible(0, 7.0, 6.0))
 
     def test_legacy_attack_visibility_can_be_restored(self):
@@ -59,6 +74,31 @@ class SMACEnemyInfoSharingTest(unittest.TestCase):
 
         self.assertTrue(env.target_is_action_visible(0, 3.0, 6.0))
         self.assertFalse(env.target_is_action_visible(0, 7.0, 6.0))
+
+    def test_connected_ally_topology_validation(self):
+        adjacency = np.array(
+            [[[False, True, False], [True, False, True], [False, True, False]]]
+        )
+        alive_mask = np.array([[True, True, True]])
+
+        assert_connected_ally_topologies(adjacency, alive_mask)
+
+    def test_disconnected_ally_topology_validation_fails(self):
+        adjacency = np.array(
+            [[[False, True, False], [True, False, False], [False, False, False]]]
+        )
+        alive_mask = np.array([[True, True, True]])
+
+        with self.assertRaisesRegex(RuntimeError, "Disconnected ally"):
+            assert_connected_ally_topologies(adjacency, alive_mask)
+
+    def test_dead_agents_are_excluded_from_topology_validation(self):
+        adjacency = np.array(
+            [[[False, True, False], [True, False, False], [False, False, False]]]
+        )
+        alive_mask = np.array([[True, True, False]])
+
+        assert_connected_ally_topologies(adjacency, alive_mask)
 
 
 if __name__ == "__main__":

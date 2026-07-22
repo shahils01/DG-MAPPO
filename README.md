@@ -150,6 +150,14 @@ Override EPO severity with `--smacv2_prob_obs_enemy P`. Enabling
 `--smacv2_action_mask` reintroduces the target-availability side channel and is
 therefore not recommended for the strongest partial-observability test.
 
+For legacy SMAC (`--env_name StarCraft2`), `--unit_sight_range R` controls only
+the ally communication/visibility radius. Enemy observations retain SMAC's
+standard 9-unit sight range, while targeted actions remain limited by the
+unit's physical attack range. The ally graph is repaired with minimum-distance
+links so all living allies remain connected. Legacy SMAC `mat_dec` rollouts
+construct and validate this same repaired topology at every timestep, but do
+not pass it into MAT-Dec or perform graph-neural-network message passing.
+
 ### DG-MAT
 
 `dg_mat` combines DG-MAPPO-style graph-local execution and D-SGD parameter

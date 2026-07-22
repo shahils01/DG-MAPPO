@@ -153,7 +153,10 @@ def parse_args(args, parser):
         help="repair disconnected ally graphs with minimum-distance edges",
     )
     parser.add_argument('--unit_sight_range', type=float, default=4.0,
-                        help="Sight range used for allied and enemy unit observations")
+                        help=(
+                            "ally communication/visibility radius; enemy "
+                            "observation keeps the standard SMAC range of 9"
+                        ))
     enemy_info_group = parser.add_mutually_exclusive_group()
     enemy_info_group.add_argument(
         "--share_enemy_info_with_neighbors",
