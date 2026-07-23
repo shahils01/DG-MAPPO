@@ -17,14 +17,14 @@ python train/train_smac.py   \
  --seed ${seed}   \
  --n_embd ${hidden_dim}   \
  --iterations 5   \
- --consensusLoss True   \
- --episode_length 200   \
+ --dropout 0.0   \
+ --n_training_threads 16   \
+ --n_rollout_threads 32   \
+ --episode_length 100   \
+ --mini_batch_size 1600   \
  --num_env_steps 40000000   \
  --lr 5e-4   \
- --use_actor_gru   \
- --use_critic_gru   \
- --data_chunk_length 20   \
- --ppo_epoch 10   \
+ --ppo_epoch 15   \
  --gamma 0.99   \
  --gae_lambda 0.95   \
  --clip_param 0.05   \

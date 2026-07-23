@@ -382,9 +382,9 @@ def get_config():
     
     """AERO-GNN HYPERPARAMETERS"""
     parser.add_argument("--iterations", type=int, default=6) # L_P
-    parser.add_argument("--num-layers", type = int, default = 3) # L_M
+    parser.add_argument("--num-layers", type = int, default = 2) # L_M
 
-    parser.add_argument("--dropout", type=float, default=0.7,)
+    parser.add_argument("--dropout", type=float, default=0.1,)
     parser.add_argument("--add-dropout", type = int, default = 0) # Last Layer Dropout
 
     parser.add_argument("--num-heads", type=int, default=1, ) # Attention Heads

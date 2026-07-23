@@ -12,9 +12,7 @@ unit_sight_range=2
 echo "env is ${env}, map is ${map}, algo is ${algo}, exp is ${exp}, seed is ${seed}"
 CUDA_LAUNCH_BLOCKING=1 python train/train_smac.py \
  --truelyDistributed True \
- --consensusLoss True \
- --gnn_loss_coef 1 \
- --num-layers 3 \
+ --num-layers 2 \
  --iterations 5 \
  --env_name ${env} \
  --algorithm_name ${algo} \
@@ -25,20 +23,18 @@ CUDA_LAUNCH_BLOCKING=1 python train/train_smac.py \
  --seed ${seed} \
  --n_training_threads 32 \
  --n_rollout_threads 32 \
- --num_mini_batch 2 \
  --mini_batch_size 1600 \
- --episode_length 100 \
+ --episode_length 200 \
  --num_env_steps 40000000 \
  --lr 5e-4 \
  --ppo_epoch 10 \
- --gamma 0.99 \
- --gae_lambda 0.95 \
- --clip_param 0.05 \
+ --gamma 0.995 \
+ --gae_lambda 0.99 \
+ --clip_param 0.1 \
  --save_interval 100000 \
  --use_value_active_masks \
  --entropy_coef 0.01 \
  --max_grad_norm 10 \
- --encode_state True \
  --n_quants 1 \
  --hidden_size ${hidden_dim} \
  --hid-dim ${hidden_dim} \
