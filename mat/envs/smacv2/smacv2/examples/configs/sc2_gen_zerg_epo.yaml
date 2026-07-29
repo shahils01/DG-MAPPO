@@ -29,7 +29,7 @@ env_args:
   num_fov_actions: 12
   obs_own_pos: True
   capability_config:
-    n_units: 5
+    n_units: 6
     n_enemies: 5
     team_gen:
       dist_type: "weighted_teams"
@@ -61,7 +61,7 @@ env_args:
   # heuristic_rest: False
   debug: False
   # most severe partial obs setting:
-  prob_obs_enemy: 0.0
+  prob_obs_enemy: 0.5
   action_mask: False
 
 test_nepisode: 32
