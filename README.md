@@ -142,6 +142,27 @@ python mat/scripts/train/train_smac.py \
   --use_eval
 ```
 
+### Recurrent IPPO baselines
+
+`ippo` and `consensus_ippo` can use independent temporal GRUs in their actor
+and critic. By default, both algorithms own separate actor and critic networks
+for every agent. `consensus_ippo` always remains independent; use
+`--ippo_share_policy` only when deliberately running a shared-network IPPO
+ablation. Enable either GRU flag (or both) and keep recurrent PPO chunks
+aligned with the episode horizon:
+
+```bash
+python mat/scripts/train/train_smac.py \
+  --env_name smacv2 \
+  --smacv2_config terran_epo \
+  --algorithm_name ippo \
+  --use_actor_gru \
+  --use_critic_gru \
+  --recurrent_N 1 \
+  --data_chunk_length 20 \
+  --episode_length 200
+```
+
 For graph algorithms, ally edges use the smaller SMACv2 sight range of each
 unit pair. Set `--smacv2_comm_range R` to use a fixed communication radius.
 Disconnected graphs remain disconnected by default; use

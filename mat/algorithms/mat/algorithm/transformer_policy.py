@@ -78,7 +78,17 @@ class TransformerPolicy:
             self.obs_dim_ = self.obs_dim
             self.truelyDistributed = False
             if self.algorithm_name == "consensus_ippo":
+                if getattr(args, "ippo_share_policy", False):
+                    raise ValueError(
+                        "--ippo_share_policy applies only to IPPO; "
+                        "consensus_ippo always owns one actor and critic per agent"
+                    )
                 args.share_policy = False
+            else:
+                # IPPO is an independent-policy baseline by default.  The
+                # generic --share_policy option has legacy inverted semantics,
+                # so use an explicit IPPO-only opt-in for weight sharing.
+                args.share_policy = bool(getattr(args, "ippo_share_policy", False))
 
         elif self.algorithm_name == "generative_mat_gnn":
             from mat.algorithms.mat.algorithm.ma_gnn_transformer import MultiAgentGnnTransformer as MAT
@@ -232,9 +242,7 @@ class TransformerPolicy:
             available_actions = available_actions.reshape(-1, self.num_agents, self.act_dim)
 
         if self.algorithm_name in {
-            "mappo_gnn",
-            "mappo_dgnn",
-            "mappo_dgnn_dsgd",
+            "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd",
         }:
             actor_states = check(rnn_states_actor).to(**self.tpdv).reshape(
                 -1, self.num_agents, self.n_embd
@@ -257,6 +265,33 @@ class TransformerPolicy:
                 available_actions,
                 deterministic,
                 batched_edge_index,
+                rnn_states_actor=actor_states,
+                rnn_states_critic=critic_states,
+                masks=recurrent_masks,
+                return_rnn_states=True,
+            )
+            return (
+                values.view(-1, self.num_quants),
+                actions.view(-1, self.act_num),
+                action_log_probs.view(-1, self.act_num),
+                actor_states.view(-1, self.n_embd),
+                critic_states.view(-1, self.n_embd),
+            )
+
+        if self.algorithm_name in {"ippo", "consensus_ippo"} and (
+            self.transformer.use_actor_gru or self.transformer.use_critic_gru
+        ):
+            actor_states = check(rnn_states_actor).to(**self.tpdv).reshape(
+                -1, self.num_agents, self.n_embd
+            )
+            critic_states = check(rnn_states_critic).to(**self.tpdv).reshape(
+                -1, self.num_agents, self.n_embd
+            )
+            recurrent_masks = check(masks).to(**self.tpdv).reshape(
+                -1, self.num_agents, 1
+            )
+            actions, action_log_probs, values, actor_states, critic_states = self.transformer.get_actions(
+                cent_obs, obs, available_actions, deterministic,
                 rnn_states_actor=actor_states,
                 rnn_states_critic=critic_states,
                 masks=recurrent_masks,
@@ -357,6 +392,17 @@ class TransformerPolicy:
                 masks=recurrent_masks,
                 edge_index=batched_edge_index,
             )
+        elif self.algorithm_name in {"ippo", "consensus_ippo"} and self.transformer.use_critic_gru:
+            critic_states = check(rnn_states_critic).to(**self.tpdv).reshape(
+                -1, self.num_agents, self.n_embd
+            )
+            recurrent_masks = check(masks).to(**self.tpdv).reshape(
+                -1, self.num_agents, 1
+            )
+            values = self.transformer.get_values(
+                cent_obs, obs, available_actions,
+                rnn_states_critic=critic_states, masks=recurrent_masks,
+            )
         else:
             values = self.transformer.get_values(cent_obs, obs, available_actions)
 
@@ -413,6 +459,16 @@ class TransformerPolicy:
                 rnn_states_critic=rnn_states_critic,
                 masks=masks,
                 edge_index=edge_index,
+                sequence_length=sequence_length,
+            )
+        elif self.algorithm_name in {"ippo", "consensus_ippo"} and (
+            self.transformer.use_actor_gru or self.transformer.use_critic_gru
+        ):
+            action_log_probs, values, entropy = self.transformer(
+                cent_obs, obs, actions, available_actions,
+                rnn_states_actor=rnn_states_actor,
+                rnn_states_critic=rnn_states_critic,
+                masks=masks,
                 sequence_length=sequence_length,
             )
         else:

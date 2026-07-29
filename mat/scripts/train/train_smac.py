@@ -319,14 +319,15 @@ def main(args):
         all_args.encode_state = False
 
     recurrent_dgnn = all_args.use_actor_gru or all_args.use_critic_gru
-    if recurrent_dgnn and all_args.algorithm_name != "mappo_dgnn_dsgd":
+    recurrent_algorithms = {"mappo_dgnn_dsgd", "ippo", "consensus_ippo"}
+    if recurrent_dgnn and all_args.algorithm_name not in recurrent_algorithms:
         parser.error(
             "--use_actor_gru and --use_critic_gru are currently supported "
-            "only with --algorithm_name mappo_dgnn_dsgd"
+            "only with mappo_dgnn_dsgd, ippo, or consensus_ippo"
         )
     if recurrent_dgnn:
         if all_args.recurrent_N != 1:
-            parser.error("DGNN GRUs currently require --recurrent_N 1")
+            parser.error("GRU policies currently require --recurrent_N 1")
         if all_args.data_chunk_length <= 0:
             parser.error("--data_chunk_length must be greater than zero")
         if all_args.episode_length % all_args.data_chunk_length != 0:

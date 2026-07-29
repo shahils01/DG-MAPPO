@@ -548,7 +548,9 @@ class MATTrainer:
         num_updates = 0
 
         for i in range(self.ppo_epoch):
-            recurrent_dgnn = self.policy.algorithm_name == "mappo_dgnn_dsgd" and (
+            recurrent_dgnn = self.policy.algorithm_name in {
+                "mappo_dgnn_dsgd", "ippo", "consensus_ippo"
+            } and (
                 self.args.use_actor_gru or self.args.use_critic_gru
             )
             if recurrent_dgnn:

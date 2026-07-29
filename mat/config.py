@@ -204,6 +204,15 @@ def get_config():
     # network parameters
     parser.add_argument("--share_policy", action='store_false',
                         default=True, help='Whether agent share the same policy')
+    parser.add_argument(
+        "--ippo_share_policy",
+        action="store_true",
+        default=False,
+        help=(
+            "share one actor and one critic across IPPO agents; IPPO and "
+            "consensus_ippo otherwise use independent per-agent networks"
+        ),
+    )
     parser.add_argument("--use_centralized_V", action='store_false',
                         default=True, help="Whether to use centralized V function")
     parser.add_argument("--use_centralized_critic", action='store_false',
@@ -239,7 +248,7 @@ def get_config():
         default=False,
         help=(
             "use a temporal GRU in each decentralized actor; currently "
-            "supported by mappo_dgnn_dsgd"
+            "supported by mappo_dgnn_dsgd, ippo, and consensus_ippo"
         ),
     )
     parser.add_argument(
@@ -248,7 +257,7 @@ def get_config():
         default=False,
         help=(
             "use a temporal GRU in each decentralized critic; currently "
-            "supported by mappo_dgnn_dsgd"
+            "supported by mappo_dgnn_dsgd, ippo, and consensus_ippo"
         ),
     )
 
