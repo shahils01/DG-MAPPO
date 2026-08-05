@@ -244,9 +244,11 @@ class SharedReplayBuffer(object):
                 self.available_actions[self.step + 1], available_actions
             )
         if edge_index is not None:
-            self.copy_into(self.edge_index[self.step], edge_index)
+            # ``edge_index`` and ``adjcency_matrix`` are queried after
+            # env.step(), so they describe the observation stored at step + 1.
+            self.copy_into(self.edge_index[self.step + 1], edge_index)
         if adjcency_matrix is not None:
-            self.copy_into(self.adjcency_matrix[self.step], adjcency_matrix)
+            self.copy_into(self.adjcency_matrix[self.step + 1], adjcency_matrix)
 
         self.step = (self.step + 1) % self.episode_length
 

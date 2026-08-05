@@ -521,10 +521,20 @@ class MultiAgentGnnTransformer(nn.Module):
             action_log = distribution.log_prob(action.squeeze(-1)).unsqueeze(-1)
             entropy = distribution.entropy().unsqueeze(-1)
         else:
-            if self.use_actor_gru:
-                raise NotImplementedError("actor GRU currently supports discrete actions")
-            action_log, entropy = continuous_parallel_act(self.decoder, obs_rep, obs, action, batch_size,
-                                                          self.n_agent, self.action_dim, self.tpdv)
+            # The recurrent decoder has the same Gaussian policy parameterization
+            # as the feed-forward path; only the mean network is recurrent.
+            means = self.decoder(
+                None,
+                obs_rep,
+                obs,
+                rnn_states_actor,
+                masks,
+                sequence_length,
+            )
+            action_std = torch.sigmoid(self.decoder.log_std) * 0.5
+            distribution = torch.distributions.Normal(means, action_std)
+            action_log = distribution.log_prob(action)
+            entropy = distribution.entropy()
 
         v_loc, obs_rep, _ = self.encoder(
             state,
@@ -582,12 +592,19 @@ class MultiAgentGnnTransformer(nn.Module):
             output_action = action.unsqueeze(-1)
             output_action_log = distribution.log_prob(action).unsqueeze(-1)
         else:
-            if self.use_actor_gru:
-                raise NotImplementedError("actor GRU currently supports discrete actions")
-            output_action, output_action_log = continuous_decentralized_act(self.decoder, obs_rep, obs, batch_size,
-                                                                             self.n_agent, self.action_dim,
-                                                                             self.tpdv, deterministic)
-            new_actor_states = rnn_states_actor
+            means, new_actor_states = self.decoder(
+                None,
+                obs_rep,
+                obs,
+                rnn_states_actor,
+                masks,
+                1,
+                return_states=True,
+            )
+            action_std = torch.sigmoid(self.decoder.log_std) * 0.5
+            distribution = torch.distributions.Normal(means, action_std)
+            output_action = means if deterministic else distribution.sample()
+            output_action_log = distribution.log_prob(output_action)
 
         # action_logits = self.decoder(None,None,obs)
         # action_logits = torch.cat((F.gelu(action_logits), self.eye.repeat(action_logits.shape[0],1,1)), axis=-1)

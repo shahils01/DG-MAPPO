@@ -26,6 +26,10 @@ def faulty_action(action, faulty_node):
 
 GRAPH_ALGORITHMS = {"mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd", "consensus_ippo"}
 GNN_ALGORITHMS = {"mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd"}
+# MAPPO-DGNN-DSGD owns message construction internally so it must receive raw
+# observations plus the graph. The legacy GNN variants expect the runner to
+# append their precomputed messages.
+RUNNER_GNN_MESSAGE_ALGORITHMS = {"mappo_gnn", "mappo_dgnn"}
 
 
 class MAGoToGoalRunner(Runner):
@@ -270,7 +274,18 @@ class MAGoToGoalRunner(Runner):
 
             for step in range(self.episode_length):
                 # Sample actions
-                values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step)
+                current_batch_edge_index = None
+                if self.algorithm_name == "mappo_dgnn_dsgd":
+                    current_edge_index = self.envs.get_edge_index_matrix()
+                    current_edge_index = torch.tensor(
+                        current_edge_index, dtype=torch.float32, device="cuda:0"
+                    )
+                    current_batch_edge_index = self.get_batch_edge_index(
+                        current_edge_index
+                    )
+                values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(
+                    step, current_batch_edge_index
+                )
                 actions_fault = faulty_action(actions.cpu().detach().numpy(), self.all_args.faulty_node)
 
                 # Obser reward and next obs
@@ -313,8 +328,20 @@ class MAGoToGoalRunner(Runner):
                     # insert data into buffer
                     self.insert(data)
 
-            # compute return and update network
-            self.compute()
+            # Bootstrap the last state with its matching graph.  DG-MAPPO
+            # constructs graph messages inside the policy, unlike the legacy
+            # GNN variants whose runner-expanded observations carry them.
+            if self.algorithm_name == "mappo_dgnn_dsgd":
+                final_edge_index = torch.tensor(
+                    self.envs.get_edge_index_matrix(),
+                    dtype=torch.float32,
+                    device="cuda:0",
+                )
+                self.compute(
+                    batched_edge_index=self.get_batch_edge_index(final_edge_index)
+                )
+            else:
+                self.compute()
             train_infos = self.train(episode)
 
             # post process
@@ -375,8 +402,6 @@ class MAGoToGoalRunner(Runner):
             self.buffer.adjcency_matrix[0] = adjcency_matrix.clone()
 
         if self.algorithm_name in GNN_ALGORITHMS:
-            self.buffer.obs = torch.zeros((self.episode_length + 1, self.n_rollout_threads, self.num_agents, self.obs_dim+self.n_embd), dtype=torch.float32, device='cuda:0')
-
             print('obs shape = ', obs.shape)
 
             adjcency_matrix = self.envs.get_visibility_matrix()
@@ -385,10 +410,12 @@ class MAGoToGoalRunner(Runner):
             edge_index = self.envs.get_edge_index_matrix()
             edge_index = torch.tensor(edge_index, dtype=torch.float32, device="cuda:0")
             batch_edge_index = self.get_batch_edge_index(edge_index)
-        
-            x = self.trainer.policy.transformer.obs_encoder(obs, batch_edge_index)
-        
-            obs = torch.cat([obs,x],dim=-1).detach()
+
+            self.buffer.edge_index[0] = edge_index.clone()
+            if self.algorithm_name in RUNNER_GNN_MESSAGE_ALGORITHMS:
+                self.buffer.obs = torch.zeros((self.episode_length + 1, self.n_rollout_threads, self.num_agents, self.obs_dim+self.n_embd), dtype=torch.float32, device='cuda:0')
+                x = self.trainer.policy.transformer.obs_encoder(obs, batch_edge_index)
+                obs = torch.cat([obs,x],dim=-1).detach()
 
             self.buffer.adjcency_matrix[0] = adjcency_matrix.clone()
 
@@ -427,10 +454,12 @@ class MAGoToGoalRunner(Runner):
         obs, share_obs, rewards, dones, infos, available_actions, \
         values, actions, action_log_probs, rnn_states, rnn_states_critic = data
         
-        if self.all_args.iterations > 0:
-            if self.algorithm_name in GNN_ALGORITHMS:
-                x = self.trainer.policy.transformer.obs_encoder(obs, batched_edge_index)
-                obs = torch.cat([obs,x],dim=-1).detach()
+        if (
+            self.all_args.iterations > 0
+            and self.algorithm_name in RUNNER_GNN_MESSAGE_ALGORITHMS
+        ):
+            x = self.trainer.policy.transformer.obs_encoder(obs, batched_edge_index)
+            obs = torch.cat([obs,x],dim=-1).detach()
 
         dones_env = torch.all(dones, dim=1)
 
@@ -509,9 +538,9 @@ class MAGoToGoalRunner(Runner):
 
                     avg_node_degree = batch_edge_index.shape[1]/self.num_agents
             
-                    x = self.trainer.policy.transformer.obs_encoder(eval_obs, batch_edge_index)
-
-                    eval_obs = torch.cat([eval_obs,x],dim=-1).detach()
+                    if self.algorithm_name in RUNNER_GNN_MESSAGE_ALGORITHMS:
+                        x = self.trainer.policy.transformer.obs_encoder(eval_obs, batch_edge_index)
+                        eval_obs = torch.cat([eval_obs,x],dim=-1).detach()
                     # eval_obs = eval_obs.cpu().detach().numpy()
             
             self.trainer.prep_rollout()

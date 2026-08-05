@@ -225,6 +225,12 @@ def parse_args(args, parser):
     parser.add_argument("--env_device", type=str, default="cpu")
     parser.add_argument("--faulty_node", type=int, default=-1)
     parser.add_argument("--eval_faulty_node", type=int, nargs="+", default=[-1])
+    parser.add_argument(
+        "--run_dir",
+        type=str,
+        default="",
+        help="Optional output directory override (use scratch on a cluster).",
+    )
     parser.add_argument("--add_center_xy", action="store_true", default=False)
     parser.add_argument("--use_state_agent", action="store_true", default=False)
     parser.add_argument("--use_mustalive", action="store_false", default=True)
@@ -249,6 +255,25 @@ def configure_algorithm(all_args):
         all_args.n_quants = 1
         if all_args.algorithm_name == "consensus_ippo":
             all_args.share_policy = False
+
+    recurrent_policy = all_args.use_actor_gru or all_args.use_critic_gru
+    if recurrent_policy:
+        supported = {"mappo_dgnn_dsgd", "ippo", "consensus_ippo"}
+        if all_args.algorithm_name not in supported:
+            raise ValueError(
+                "Actor/critic GRUs are supported only by mappo_dgnn_dsgd, "
+                "ippo, and consensus_ippo."
+            )
+        if all_args.recurrent_N != 1:
+            raise ValueError("GRU policies currently require recurrent_N=1.")
+        if all_args.data_chunk_length <= 0:
+            raise ValueError("data_chunk_length must be greater than zero.")
+        if all_args.episode_length % all_args.data_chunk_length != 0:
+            raise ValueError(
+                "episode_length must be divisible by data_chunk_length when "
+                "a GRU is enabled."
+            )
+        all_args.use_recurrent_policy = True
 
     if all_args.algorithm_name == "dgn":
         all_args.iterations = 0
@@ -280,14 +305,17 @@ def main(args):
 
     print("predator-prey config:", all_args)
 
-    run_dir = (
-        Path(os.path.split(os.path.dirname(os.path.abspath(__file__)))[0] + "/results")
-        / all_args.env_name
-        / all_args.scenario
-        / f"{all_args.num_predators}pred_{all_args.num_prey}prey"
-        / all_args.algorithm_name
-        / all_args.experiment_name
-    )
+    if all_args.run_dir:
+        run_dir = Path(all_args.run_dir).expanduser()
+    else:
+        run_dir = (
+            Path(os.path.split(os.path.dirname(os.path.abspath(__file__)))[0] + "/results")
+            / all_args.env_name
+            / all_args.scenario
+            / f"{all_args.num_predators}pred_{all_args.num_prey}prey"
+            / all_args.algorithm_name
+            / all_args.experiment_name
+        )
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if all_args.use_wandb:

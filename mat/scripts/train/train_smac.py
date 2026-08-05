@@ -406,8 +406,20 @@ def main(args):
         device = torch.device("cpu")
         #torch.set_num_threads(all_args.n_training_threads)
 
-    run_dir = Path(os.path.split(os.path.dirname(os.path.abspath(__file__)))[
-                       0] + "/results") / all_args.env_name / all_args.map_name / all_args.algorithm_name / all_args.experiment_name
+    # A scheduler run should be able to direct artifacts to scratch storage.
+    # Keep the historical repository-relative location when no override is
+    # supplied so existing launches remain unchanged.
+    if all_args.run_dir:
+        run_dir = Path(all_args.run_dir).expanduser()
+    else:
+        run_dir = (
+            Path(os.path.split(os.path.dirname(os.path.abspath(__file__)))[0])
+            / "results"
+            / all_args.env_name
+            / all_args.map_name
+            / all_args.algorithm_name
+            / all_args.experiment_name
+        )
     if not run_dir.exists():
         os.makedirs(str(run_dir))
 
