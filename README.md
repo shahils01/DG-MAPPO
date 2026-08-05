@@ -163,6 +163,28 @@ python mat/scripts/train/train_smac.py \
   --episode_length 200
 ```
 
+### Native MAPPO baseline
+
+`mappo` is the in-repository centralized-training/decentralized-execution
+baseline. It uses a shared local actor and a centralized state-value critic,
+with graph messaging, consensus loss, and D-SGD disabled. It also supports the
+same actor/critic GRU flags as IPPO when a recurrent comparison is needed.
+
+```bash
+python mat/scripts/train/train_smac.py \
+  --env_name smacv2 \
+  --smacv2_config terran_epo \
+  --algorithm_name mappo \
+  --experiment_name mappo_terran_epo \
+  --seed 0 \
+  --n_training_threads 16 \
+  --n_rollout_threads 32 \
+  --episode_length 200 \
+  --mini_batch_size 1600 \
+  --num_env_steps 20000000 \
+  --use_eval
+```
+
 For graph algorithms, ally edges use the smaller SMACv2 sight range of each
 unit pair. Set `--smacv2_comm_range R` to use a fixed communication radius.
 Disconnected graphs remain disconnected by default; use

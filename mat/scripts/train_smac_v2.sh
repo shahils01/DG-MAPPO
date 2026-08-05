@@ -3,7 +3,7 @@ set -euo pipefail
 
 env="smacv2"    # StarCraft2 or smacv2
 map="protoss"    # 6h_vs_8z, 5m_vs_6m, MMM2, protoss_5_vs_5
-algo="mappo_dgnn_dsgd"       # Algos: {mappo_dgnn_dsgd, mat, mat_dec, ippo, consensus_ippo}
+algo="mappo_dgnn_dsgd"       # Algos: {mappo, mappo_dgnn_dsgd, mat, mat_dec, ippo, consensus_ippo}
 exp="mappo_dgnn_dsgd"
 seed=0
 hidden_dim=64

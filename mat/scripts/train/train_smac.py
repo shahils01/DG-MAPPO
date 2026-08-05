@@ -318,12 +318,23 @@ def main(args):
         all_args.use_centralized_V = False
         all_args.encode_state = False
 
+    if all_args.algorithm_name == "mappo":
+        # Canonical homogeneous-agent MAPPO: shared local actor and
+        # centralized state-value critic, with no graph or consensus terms.
+        all_args.share_policy = True
+        all_args.truelyDistributed = False
+        all_args.iterations = 0
+        all_args.n_quants = 1
+        all_args.use_centralized_V = True
+        all_args.use_centralized_critic = True
+        all_args.encode_state = False
+
     recurrent_dgnn = all_args.use_actor_gru or all_args.use_critic_gru
-    recurrent_algorithms = {"mappo_dgnn_dsgd", "ippo", "consensus_ippo"}
+    recurrent_algorithms = {"mappo", "mappo_dgnn_dsgd", "ippo", "consensus_ippo"}
     if recurrent_dgnn and all_args.algorithm_name not in recurrent_algorithms:
         parser.error(
             "--use_actor_gru and --use_critic_gru are currently supported "
-            "only with mappo_dgnn_dsgd, ippo, or consensus_ippo"
+            "only with mappo, mappo_dgnn_dsgd, ippo, or consensus_ippo"
         )
     if recurrent_dgnn:
         if all_args.recurrent_N != 1:

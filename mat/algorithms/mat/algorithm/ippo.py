@@ -60,9 +60,13 @@ class Encoder(nn.Module):
         self.n_agent = n_agent
         self.encode_state = encode_state
         self.share_policy = args.share_policy
+        self.use_centralized_critic = bool(
+            getattr(args, "use_centralized_critic", False)
+        )
         self.use_critic_gru = bool(getattr(args, "use_critic_gru", False))
 
-        critic_input_dim = n_embd if self.use_critic_gru else obs_dim
+        critic_obs_dim = state_dim if self.use_centralized_critic else obs_dim
+        critic_input_dim = n_embd if self.use_critic_gru else critic_obs_dim
         def make_critic():
             return nn.Sequential(nn.LayerNorm(critic_input_dim),
                             init_(nn.Linear(critic_input_dim, n_embd), activate=True), nn.GELU(), nn.LayerNorm(n_embd),
@@ -72,7 +76,7 @@ class Encoder(nn.Module):
         self.gru_ = nn.ModuleList()
         if self.use_critic_gru:
             self.gru_.extend(
-                nn.GRUCell(obs_dim, n_embd)
+                nn.GRUCell(critic_obs_dim, n_embd)
                 for _ in range(1 if self.share_policy else n_agent)
             )
 
@@ -85,10 +89,11 @@ class Encoder(nn.Module):
                 return_states=False):
         # state: (batch, n_agent, state_dim)
         # obs: (batch, n_agent, obs_dim)                
+        critic_obs = state if self.use_centralized_critic else obs
         features, new_states = (
-            _run_grus(self.gru_, obs, rnn_states, masks, sequence_length,
+            _run_grus(self.gru_, critic_obs, rnn_states, masks, sequence_length,
                       self.share_policy)
-            if self.use_critic_gru else (obs, rnn_states)
+            if self.use_critic_gru else (critic_obs, rnn_states)
         )
         v_loc = []
         rep = []
@@ -111,7 +116,7 @@ class Encoder(nn.Module):
 
     def agent_forward(self, state, obs, agent_id):
         # obs = torch.cat((obs,action_hat), axis=-1)
-        x = obs
+        x = state if self.use_centralized_critic else obs
         x = x.unsqueeze(1)
         critic = self.head if self.share_policy else self.head_[agent_id]
         v_loc = critic(x[:,0,:])
@@ -307,11 +312,19 @@ class IPPO(nn.Module):
 
     def get_values(self, state, obs, available_actions=None, rnn_states_critic=None,
                    masks=None):
-        # state unused
-        # state = np.zeros((*ori_shape[:-1], 37), dtype=np.float32)
-
         state = check(state).to(**self.tpdv)
         obs = check(obs).to(**self.tpdv)
 
         v_tot, obs_rep = self.encoder(state, obs, rnn_states_critic, masks)
         return v_tot
+
+
+class MAPPO(IPPO):
+    """MAPPO actor-critic with a centralized state-value encoder.
+
+    The actor remains decentralized and parameter-shared for homogeneous
+    agents.  The encoder switches to ``share_obs`` when
+    ``use_centralized_critic`` is enabled by the MAPPO configuration.
+    """
+
+    pass

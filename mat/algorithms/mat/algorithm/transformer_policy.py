@@ -73,6 +73,12 @@ class TransformerPolicy:
             ):
                 self.obs_dim_ = self.obs_dim+args.n_embd
 
+        elif self.algorithm_name == "mappo":
+            from mat.algorithms.mat.algorithm.ippo import MAPPO as MAT
+            self.obs_dim_ = self.obs_dim
+            self.truelyDistributed = False
+            args.share_policy = True
+
         elif self.algorithm_name in ["ippo", "consensus_ippo"]:
             from mat.algorithms.mat.algorithm.ippo import IPPO as MAT
             self.obs_dim_ = self.obs_dim
@@ -278,7 +284,7 @@ class TransformerPolicy:
                 critic_states.view(-1, self.n_embd),
             )
 
-        if self.algorithm_name in {"ippo", "consensus_ippo"} and (
+        if self.algorithm_name in {"mappo", "ippo", "consensus_ippo"} and (
             self.transformer.use_actor_gru or self.transformer.use_critic_gru
         ):
             actor_states = check(rnn_states_actor).to(**self.tpdv).reshape(
@@ -392,7 +398,7 @@ class TransformerPolicy:
                 masks=recurrent_masks,
                 edge_index=batched_edge_index,
             )
-        elif self.algorithm_name in {"ippo", "consensus_ippo"} and self.transformer.use_critic_gru:
+        elif self.algorithm_name in {"mappo", "ippo", "consensus_ippo"} and self.transformer.use_critic_gru:
             critic_states = check(rnn_states_critic).to(**self.tpdv).reshape(
                 -1, self.num_agents, self.n_embd
             )
@@ -461,7 +467,7 @@ class TransformerPolicy:
                 edge_index=edge_index,
                 sequence_length=sequence_length,
             )
-        elif self.algorithm_name in {"ippo", "consensus_ippo"} and (
+        elif self.algorithm_name in {"mappo", "ippo", "consensus_ippo"} and (
             self.transformer.use_actor_gru or self.transformer.use_critic_gru
         ):
             action_log_probs, values, entropy = self.transformer(
