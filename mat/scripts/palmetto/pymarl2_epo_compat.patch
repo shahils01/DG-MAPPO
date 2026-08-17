@@ -1,0 +1,51 @@
+diff --git a/src/envs/__init__.py b/src/envs/__init__.py
+--- a/src/envs/__init__.py
++++ b/src/envs/__init__.py
+@@ -7 +7 @@
+-from smac.env import StarCraft2Env, StarCraftCapabilityEnvWrapper
++from smacv2.env import StarCraft2Env, StarCraftCapabilityEnvWrapper
+diff --git a/src/main.py b/src/main.py
+index c7af300..b5014b9 100644
+--- a/src/main.py
++++ b/src/main.py
+@@ -1,6 +1,6 @@
+ import numpy as np
+ import os
+-import collections
++from collections.abc import Mapping
+ from os.path import dirname, abspath, join
+ from copy import deepcopy
+ from sacred import Experiment, SETTINGS
+@@ -53,7 +53,7 @@ def _get_config(params, arg_name, subfolder):
+ 
+ def recursive_dict_update(d, u):
+     for k, v in u.items():
+-        if isinstance(v, collections.Mapping):
++        if isinstance(v, Mapping):
+             d[k] = recursive_dict_update(d.get(k, {}), v)
+         else:
+     d[k] = v
+diff --git a/src/run/run.py b/src/run/run.py
+--- a/src/run/run.py
++++ b/src/run/run.py
+@@ -19 +19 @@
+-from smac.env import StarCraft2Env
++from smacv2.env import StarCraft2Env
+diff --git a/src/utils/logging.py b/src/utils/logging.py
+index ae4bb52..fc0182f 100644
+--- a/src/utils/logging.py
++++ b/src/utils/logging.py
+@@ -30 +30,3 @@ class Logger:
+-        wandb.init(project=config.project, entity=config.entity, group=config.group, name=config.tag, config=config.__dict__)
++        run_name = config.label if config.label != "default_label" else config.tag
++        wandb.init(project=config.project, entity=config.entity, group=config.group,
++                   name=run_name, config=config.__dict__)
+@@ -59 +61,7 @@ class Logger:
+-            wandb.log({key: value, "train/step": t})
++            payload = {key: value, "train/step": t}
++            if key == "test/battle_won_mean":
++                # Match the metric and x-axis used by the DG-MAPPO W&B panels.
++                payload["eval_win_rate"] = value
++                wandb.log(payload, step=t)
++            else:
++                wandb.log(payload)
