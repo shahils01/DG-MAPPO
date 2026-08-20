@@ -322,9 +322,9 @@ class IPPO(nn.Module):
 class MAPPO(IPPO):
     """MAPPO actor-critic with a centralized state-value encoder.
 
-    The actor remains decentralized and parameter-shared for homogeneous
-    agents.  The encoder switches to ``share_obs`` when
-    ``use_centralized_critic`` is enabled by the MAPPO configuration.
+    Actors and critics follow the configured ``share_policy`` setting. The
+    encoder switches to ``share_obs`` when ``use_centralized_critic`` is
+    enabled by the MAPPO configuration.
     """
 
     pass

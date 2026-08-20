@@ -319,8 +319,8 @@ def main(args):
         all_args.encode_state = False
 
     if all_args.algorithm_name == "mappo":
-        # Canonical homogeneous-agent MAPPO: shared local actor and
-        # centralized state-value critic, with no graph or consensus terms.
+        # Unshared CTDE MAPPO: each agent owns its actor and centralized
+        # state-value critic, with no graph or consensus terms.
         all_args.share_policy = False
         all_args.truelyDistributed = False
         all_args.iterations = 0

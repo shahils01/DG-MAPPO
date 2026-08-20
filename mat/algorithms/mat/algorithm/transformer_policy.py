@@ -77,7 +77,6 @@ class TransformerPolicy:
             from mat.algorithms.mat.algorithm.ippo import MAPPO as MAT
             self.obs_dim_ = self.obs_dim
             self.truelyDistributed = False
-            args.share_policy = True
 
         elif self.algorithm_name in ["ippo", "consensus_ippo"]:
             from mat.algorithms.mat.algorithm.ippo import IPPO as MAT

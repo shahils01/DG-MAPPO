@@ -1,4 +1,4 @@
-"""Coverage for recurrent IPPO and consensus-IPPO network components."""
+"""Coverage for recurrent MAPPO, IPPO, and consensus-IPPO components."""
 
 from types import SimpleNamespace
 import unittest
@@ -125,6 +125,35 @@ class IPPOGRUTest(unittest.TestCase):
         self.assertTrue(policy.transformer.decoder.share_policy)
         self.assertFalse(hasattr(policy.transformer.encoder, "head_"))
         self.assertFalse(hasattr(policy.transformer.decoder, "mlp_"))
+
+    def test_mappo_preserves_independent_actor_and_critic_networks(self):
+        args = get_config().parse_args([])
+        args.algorithm_name = "mappo"
+        args.share_policy = False
+        args.use_centralized_critic = True
+        args.use_actor_gru = True
+        args.use_critic_gru = True
+        args.n_embd = 8
+        args.n_block = 1
+        args.n_head = 1
+        args.n_quants = 1
+        args.truelyDistributed = False
+
+        policy = TransformerPolicy(
+            args, Box(5), Box(7), Discrete(4), num_agents=3,
+        )
+
+        encoder = policy.transformer.encoder
+        decoder = policy.transformer.decoder
+        self.assertTrue(encoder.use_centralized_critic)
+        self.assertFalse(encoder.share_policy)
+        self.assertFalse(decoder.share_policy)
+        self.assertEqual(len(encoder.head_), 3)
+        self.assertEqual(len(decoder.mlp_), 3)
+        self.assertEqual(len(encoder.gru_), 3)
+        self.assertEqual(len(decoder.gru_), 3)
+        self.assertEqual(len({id(module) for module in encoder.head_}), 3)
+        self.assertEqual(len({id(module) for module in decoder.mlp_}), 3)
 
 
 if __name__ == "__main__":

@@ -159,7 +159,7 @@ def get_config():
     # prepare parameters
     parser.add_argument("--algorithm_name", type=str,
                         default='mat', choices=["mat", "mat_dec", "mat_encoder", "mat_decoder", "mat_gru", "dg_mat", "mappo", "mappo_gnn", "mappo_dgnn", "mappo_dgnn_dsgd", "ippo", "consensus_ippo", "dgn"],
-                        help="mappo: shared local actor with centralized critic; dg_mat: distributed graph-masked actor/critic with D-SGD; mappo_dgnn: distributed GNN with consensus loss; mappo_gnn: shared trunk GNN with consensus loss; mappo_dgnn_dsgd: distributed GNN with D-SGD; consensus_ippo: IPPO with graph-neighbor critic consensus; dgn: DGN graph-attention baseline")
+                        help="mappo: per-agent local actors and centralized critics; dg_mat: distributed graph-masked actor/critic with D-SGD; mappo_dgnn: distributed GNN with consensus loss; mappo_gnn: shared trunk GNN with consensus loss; mappo_dgnn_dsgd: distributed GNN with D-SGD; consensus_ippo: IPPO with graph-neighbor critic consensus; dgn: DGN graph-attention baseline")
 
     parser.add_argument("--experiment_name", type=str, default="check", help="an identifier to distinguish different experiment.")
     parser.add_argument("--seed", type=int, default=1, help="Random seed for numpy/torch")
