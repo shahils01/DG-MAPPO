@@ -14,6 +14,11 @@ from mat.envs.env_wrappers import ShareSubprocVecEnv
 from mat.runner.shared.smac_runner_new import SMACRunner
 from mat.runner.shared.dgn_runner import DGNRunner
 from mat.algorithms.mat.algorithm.dg_mat import resolve_agent_devices
+from mat.utils.checkpointing import (
+    checkpoint_directory,
+    checkpoint_metadata,
+    resolve_resume_checkpoint,
+)
 
 """Train script for SMAC."""
 def make_train_env(all_args, env_config=None):
@@ -238,6 +243,8 @@ def parse_args(args, parser):
         parser.error("--unit_sight_range must be greater than 0")
     if all_args.smac_worker_timeout <= 0:
         parser.error("--smac_worker_timeout must be greater than 0")
+    if all_args.save_interval <= 0:
+        parser.error("--save_interval must be greater than 0")
     if all_args.smacv2_comm_range is not None and all_args.smacv2_comm_range <= 0:
         parser.error("--smacv2_comm_range must be greater than 0")
 
@@ -434,6 +441,35 @@ def main(args):
     if not run_dir.exists():
         os.makedirs(str(run_dir))
 
+    if all_args.algorithm_name == "dgn" and (
+        all_args.auto_resume or all_args.resume_checkpoint is not None
+    ):
+        parser.error("Full checkpoint resumption is not yet supported for dgn")
+
+    # Full checkpoints live outside W&B's per-process run directory so a
+    # Slurm requeue can discover them before W&B and the runner are created.
+    all_args.checkpoint_dir = str(checkpoint_directory(all_args, run_dir))
+    resolved_resume = resolve_resume_checkpoint(all_args, run_dir)
+    all_args.resume_checkpoint = (
+        str(resolved_resume) if resolved_resume is not None else None
+    )
+    resume_metadata = (
+        checkpoint_metadata(resolved_resume)
+        if resolved_resume is not None
+        else None
+    )
+    if resume_metadata is not None:
+        saved_algorithm = resume_metadata.get("algorithm_name")
+        if saved_algorithm not in (None, all_args.algorithm_name):
+            parser.error(
+                "Resume checkpoint algorithm mismatch: "
+                f"checkpoint={saved_algorithm}, current={all_args.algorithm_name}"
+            )
+        print(
+            f"Found resumable checkpoint {resolved_resume} at update "
+            f"{resume_metadata.get('next_episode', 0)}."
+        )
+
     setproctitle.setproctitle(
         str(all_args.algorithm_name) + "-" + str(all_args.env_name) + "-" + str(all_args.experiment_name) + "@" + str(
             all_args.user_name))
@@ -459,6 +495,12 @@ def main(args):
     print('config = ', config)
 
     if all_args.use_wandb:
+        wandb_resume_args = {}
+        if resume_metadata is not None and resume_metadata.get("wandb_run_id"):
+            wandb_resume_args = {
+                "id": resume_metadata["wandb_run_id"],
+                "resume": "allow",
+            }
         run = wandb.init(config=all_args,
                          project=wandb_project + "_journal_new",
                          entity=all_args.user_name,
@@ -469,7 +511,8 @@ def main(args):
                          group=all_args.experiment_name,
                          dir=str(run_dir),
                          job_type="training",
-                         reinit=True)
+                         reinit=True,
+                         **wandb_resume_args)
     else:
         if not run_dir.exists():
             curr_run = 'run1'
@@ -483,6 +526,7 @@ def main(args):
         run_dir = run_dir / curr_run
         if not run_dir.exists():
             os.makedirs(str(run_dir))
+        config["run_dir"] = run_dir
 
     runner_cls = DGNRunner if all_args.algorithm_name == "dgn" else SMACRunner
     runner = runner_cls(config)

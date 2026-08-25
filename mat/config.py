@@ -151,7 +151,13 @@ def get_config():
     
     Pretrained parameters:
         --model_dir <str>
-            by default None. set the path to pretrained model.
+            Load a legacy weight-only transformer checkpoint.
+        --resume_checkpoint <str>
+            Resume complete training state from a full checkpoint.
+        --auto_resume
+            Resume from the latest checkpoint in the stable checkpoint directory.
+        --checkpoint_dir <str>
+            Stable directory for full checkpoints. Defaults inside the run directory.
     """
     parser = argparse.ArgumentParser(
         description='onpolicy', formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -316,7 +322,10 @@ def get_config():
     parser.add_argument("--use_linear_lr_decay", action='store_true',
                         default=False, help='use a linear schedule on the learning rate')
     # save parameters
-    parser.add_argument("--save_interval", type=int, default=100, help="time duration between contiunous twice models saving.")
+    parser.add_argument(
+        "--save_interval", type=int, default=100,
+        help="number of PPO updates between model and training-state checkpoints",
+    )
 
     # log parameters
     parser.add_argument("--log_interval", type=int, default=5, help="time duration between contiunous twice log printing.")
@@ -333,7 +342,25 @@ def get_config():
     parser.add_argument("--ifi", type=float, default=0.1, help="the play interval of each rendered image in saved video.")
 
     # pretrained parameters
-    parser.add_argument("--model_dir", type=str, default=None, help="by default None. set the path to pretrained model.")
+    parser.add_argument(
+        "--model_dir", type=str, default=None,
+        help="load a legacy transformer_*.pt weight checkpoint (warm start only)",
+    )
+    parser.add_argument(
+        "--resume_checkpoint", type=str, default=None,
+        help="path to a full checkpoint_*.pt training checkpoint to resume",
+    )
+    parser.add_argument(
+        "--auto_resume", action="store_true", default=False,
+        help="resume from checkpoint_dir/latest.pt when it exists",
+    )
+    parser.add_argument(
+        "--checkpoint_dir", type=str, default=None,
+        help=(
+            "stable full-checkpoint directory; defaults to "
+            "<run_dir>/checkpoints/seed<seed>"
+        ),
+    )
     # parser.add_argument("--model_dir", type=str, default='/home/shahils/Desktop/marl_ws/Multi-Agent-Transformer/mat/scripts/results/mujoco/HalfCheetah-v5/mappo_dgnn_dsgd/single/wandb/run-20251120_141518-w6xzwnl6/files/transformer_3900.pt', help="by default None. set the path to pretrained model.")
 
 

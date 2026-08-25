@@ -23,7 +23,8 @@ class SMACRunner(Runner):
 
         self.eye = torch.eye(self.num_agents, device=self.device).unsqueeze(0)
         self.eye = self.eye / torch.norm(self.eye, p='fro')  # Normalize entire matrix
-        self.disconnected_net = 0
+        if not hasattr(self, "disconnected_net"):
+            self.disconnected_net = 0
         self._use_max_grad_norm = self.all_args.use_max_grad_norm
         self.max_grad_norm = self.all_args.max_grad_norm
         self.validate_mat_dec_topology = (
@@ -70,15 +71,22 @@ class SMACRunner(Runner):
         return torch.cat(batched_edges, dim=1).long()
 
     def run(self):
+        episodes = int(self.num_env_steps) // self.episode_length // self.n_rollout_threads
+        if self.start_episode >= episodes:
+            print(
+                "Checkpoint already reached the requested training budget: "
+                f"update {self.start_episode}/{episodes}."
+            )
+            return
+
         self.warmup()
 
         start = time.time()
-        episodes = int(self.num_env_steps) // self.episode_length // self.n_rollout_threads
 
         last_battles_game = np.zeros(self.n_rollout_threads, dtype=np.float32)
         last_battles_won = np.zeros(self.n_rollout_threads, dtype=np.float32)
 
-        for episode in range(episodes):
+        for episode in range(self.start_episode, episodes):
             if self.use_linear_lr_decay:
                 self.trainer.policy.lr_decay(episode, episodes)
 
@@ -185,7 +193,11 @@ class SMACRunner(Runner):
             # post process
             total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads           
             # save model
-            if (episode % self.save_interval == 0) or (episode + 1 == int(self.num_env_steps)):
+            if (
+                episode == 0
+                or (episode + 1) % self.save_interval == 0
+                or episode == episodes - 1
+            ):
                 self.save(episode)
 
             # log information
@@ -199,7 +211,10 @@ class SMACRunner(Runner):
                                 episodes,
                                 total_num_steps,
                                 self.num_env_steps,
-                                int(total_num_steps / (end - start))))
+                                int(
+                                    (total_num_steps - self.resumed_total_num_steps)
+                                    / max(end - start, 1e-6)
+                                )))
 
                 battles_won = []
                 battles_game = []
@@ -232,6 +247,12 @@ class SMACRunner(Runner):
             # eval
             if episode % self.eval_interval == 0 and self.use_eval:
                 self.eval(total_num_steps)
+
+    def checkpoint_runner_state(self):
+        return {"disconnected_net": int(self.disconnected_net)}
+
+    def restore_runner_state(self, state):
+        self.disconnected_net = int(state.get("disconnected_net", 0))
                 
     def warmup(self):
         # reset env

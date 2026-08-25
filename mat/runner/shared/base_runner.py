@@ -1,5 +1,8 @@
 import wandb
 import os
+import random
+import shutil
+from pathlib import Path
 import numpy as np
 import torch
 from mat.utils.shared_buffer import SharedReplayBuffer
@@ -7,6 +10,12 @@ from mat.algorithms.mat.mat_trainer import MATTrainer as TrainAlgo
 from mat.algorithms.mat.algorithm.transformer_policy import TransformerPolicy as Policy
 from mat.utils.logging import SummaryWriter
 from mat.utils.util import get_shape_from_obs_space
+from mat.utils.checkpointing import (
+    LATEST_CHECKPOINT_NAME,
+    checkpoint_directory,
+    load_training_checkpoint,
+    resolve_resume_checkpoint,
+)
 
 def _t2n(x):
     """Convert torch tensor to a numpy array."""
@@ -68,6 +77,19 @@ class Runner(object):
 
         # dir
         self.model_dir = self.all_args.model_dir
+        self.checkpoint_dir = checkpoint_directory(
+            self.all_args, config["run_dir"]
+        )
+        self.resume_checkpoint = resolve_resume_checkpoint(
+            self.all_args, config["run_dir"]
+        )
+        if self.model_dir is not None and self.resume_checkpoint is not None:
+            raise ValueError(
+                "Use either --model_dir for a weight-only warm start or "
+                "--resume_checkpoint/--auto_resume for full resumption, not both."
+            )
+        self.start_episode = 0
+        self.resumed_total_num_steps = 0
 
         if self.use_wandb:
             self.save_dir = str(wandb.run.dir)
@@ -102,11 +124,15 @@ class Runner(object):
                              self.num_agents,
                              device=self.device)
 
-        if self.model_dir is not None:
-            self.restore(self.model_dir)
-
         # algorithm
         self.trainer = TrainAlgo(self.all_args, self.policy, self.num_agents, device=self.device)
+
+        # Optimizers and value normalization are created by the trainer, so a
+        # full training checkpoint must be restored after trainer creation.
+        if self.resume_checkpoint is not None:
+            self.restore_checkpoint(self.resume_checkpoint)
+        elif self.model_dir is not None:
+            self.restore(self.model_dir)
         
         # buffer
         self.buffer = SharedReplayBuffer(self.all_args,
@@ -182,8 +208,171 @@ class Runner(object):
         return train_infos
 
     def save(self, episode):
-        """Save policy's actor and critic networks."""
+        """Save legacy model weights and a resumable training checkpoint."""
+        self.save_checkpoint(episode)
         self.policy.save(self.save_dir, episode)
+
+    @staticmethod
+    def _cpu_state(value):
+        """Recursively detach tensors so checkpoints are device portable."""
+        if torch.is_tensor(value):
+            return value.detach().cpu()
+        if isinstance(value, dict):
+            return {key: Runner._cpu_state(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [Runner._cpu_state(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(Runner._cpu_state(item) for item in value)
+        return value
+
+    def _optimizers(self):
+        optimizers = self.policy.optimizers
+        return optimizers if isinstance(optimizers, (list, tuple)) else [optimizers]
+
+    def checkpoint_runner_state(self):
+        """Hook for small runner-specific counters."""
+        return {}
+
+    def restore_runner_state(self, state):
+        """Restore runner-specific counters saved by ``checkpoint_runner_state``."""
+
+    def save_checkpoint(self, episode):
+        """Atomically save all state needed to continue at the next update."""
+        checkpoint_dir = Path(self.checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        total_num_steps = (
+            (int(episode) + 1)
+            * self.episode_length
+            * self.n_rollout_threads
+        )
+        value_normalizer = self.trainer.value_normalizer
+        checkpoint = {
+            "checkpoint_version": 1,
+            "algorithm_name": self.algorithm_name,
+            "num_agents": self.num_agents,
+            "episode": int(episode),
+            "next_episode": int(episode) + 1,
+            "total_num_steps": total_num_steps,
+            "model_state_dict": self._cpu_state(
+                self.policy.transformer.state_dict()
+            ),
+            "optimizer_state_dicts": [
+                self._cpu_state(optimizer.state_dict())
+                for optimizer in self._optimizers()
+            ],
+            "value_normalizer_state_dict": (
+                self._cpu_state(value_normalizer.state_dict())
+                if value_normalizer is not None
+                else None
+            ),
+            "rng_state": {
+                "python": random.getstate(),
+                "numpy": np.random.get_state(),
+                "torch": torch.get_rng_state(),
+                "cuda": (
+                    [state.cpu() for state in torch.cuda.get_rng_state_all()]
+                    if torch.cuda.is_available()
+                    else None
+                ),
+            },
+            "runner_state": self.checkpoint_runner_state(),
+            "wandb_run_id": (
+                wandb.run.id
+                if self.use_wandb and wandb.run is not None
+                else None
+            ),
+        }
+
+        checkpoint_path = checkpoint_dir / f"checkpoint_{int(episode)}.pt"
+        temporary_path = checkpoint_dir / (
+            f".{checkpoint_path.name}.{os.getpid()}.tmp"
+        )
+        torch.save(checkpoint, temporary_path)
+        os.replace(temporary_path, checkpoint_path)
+
+        latest = checkpoint_dir / LATEST_CHECKPOINT_NAME
+        latest_temporary = checkpoint_dir / f".{LATEST_CHECKPOINT_NAME}.{os.getpid()}.tmp"
+        try:
+            latest_temporary.unlink(missing_ok=True)
+            latest_temporary.symlink_to(checkpoint_path.name)
+            os.replace(latest_temporary, latest)
+        except OSError:
+            latest_temporary.unlink(missing_ok=True)
+            shutil.copy2(checkpoint_path, latest_temporary)
+            os.replace(latest_temporary, latest)
+
+        print(
+            f"Saved resumable checkpoint at update {episode}: {checkpoint_path}"
+        )
+
+    def restore_checkpoint(self, checkpoint_path):
+        """Restore complete training state and continue at the next update."""
+        checkpoint = load_training_checkpoint(checkpoint_path)
+        checkpoint_algorithm = checkpoint.get("algorithm_name")
+        if checkpoint_algorithm not in (None, self.algorithm_name):
+            raise ValueError(
+                "Checkpoint algorithm mismatch: "
+                f"checkpoint={checkpoint_algorithm}, current={self.algorithm_name}"
+            )
+        checkpoint_agents = checkpoint.get("num_agents")
+        if checkpoint_agents not in (None, self.num_agents):
+            raise ValueError(
+                "Checkpoint agent-count mismatch: "
+                f"checkpoint={checkpoint_agents}, current={self.num_agents}"
+            )
+
+        self.policy.transformer.load_state_dict(checkpoint["model_state_dict"])
+        optimizer_states = checkpoint.get("optimizer_state_dicts", [])
+        optimizers = self._optimizers()
+        if len(optimizer_states) != len(optimizers):
+            raise ValueError(
+                "Checkpoint optimizer-count mismatch: "
+                f"checkpoint={len(optimizer_states)}, current={len(optimizers)}"
+            )
+        for optimizer, state in zip(optimizers, optimizer_states):
+            optimizer.load_state_dict(state)
+
+        value_normalizer_state = checkpoint.get("value_normalizer_state_dict")
+        if value_normalizer_state is not None:
+            if self.trainer.value_normalizer is None:
+                raise ValueError(
+                    "Checkpoint contains value-normalizer state but the current "
+                    "configuration has value normalization disabled."
+                )
+            self.trainer.value_normalizer.load_state_dict(value_normalizer_state)
+
+        rng_state = checkpoint.get("rng_state", {})
+        if rng_state.get("python") is not None:
+            random.setstate(rng_state["python"])
+        if rng_state.get("numpy") is not None:
+            np.random.set_state(rng_state["numpy"])
+        if rng_state.get("torch") is not None:
+            torch.set_rng_state(rng_state["torch"])
+        cuda_rng_state = rng_state.get("cuda")
+        if cuda_rng_state is not None and torch.cuda.is_available():
+            if len(cuda_rng_state) == torch.cuda.device_count():
+                torch.cuda.set_rng_state_all(cuda_rng_state)
+            else:
+                print(
+                    "Skipping CUDA RNG restoration because the checkpoint and "
+                    "current CUDA device counts differ."
+                )
+
+        self.start_episode = int(checkpoint.get("next_episode", 0))
+        self.resumed_total_num_steps = int(
+            checkpoint.get(
+                "total_num_steps",
+                self.start_episode
+                * self.episode_length
+                * self.n_rollout_threads,
+            )
+        )
+        self.restore_runner_state(checkpoint.get("runner_state", {}))
+        print(
+            f"Resumed complete training state from {checkpoint_path}; "
+            f"continuing at update {self.start_episode} "
+            f"({self.resumed_total_num_steps} environment steps)."
+        )
 
     def restore(self, model_dir):
         """Restore policy's networks from a saved model."""
