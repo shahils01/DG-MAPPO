@@ -265,6 +265,12 @@ class GNN_Model(MessagePassing):
         self.hid_channels = hid_channels
         self.hid_channels_ = self.heads * self.hid_channels
         self.K = self.args.iterations
+        self.attention_type = getattr(self.args, "gnn_attention_type", "gat").lower()
+        if self.attention_type not in {"gat", "gatv2"}:
+            raise ValueError(
+                "gnn_attention_type must be either 'gat' or 'gatv2', "
+                f"got {self.attention_type!r}"
+            )
         self.agent_parallel_enabled = False
         self.agent_devices = [torch.device("cpu")] * num_agents
         self.output_device = torch.device("cpu")
@@ -337,7 +343,12 @@ class GNN_Model(MessagePassing):
                 edge_att_layer = nn.ParameterList()
 
                 for i in range(self.num_nodes):
-                    edge_att = nn.Parameter(torch.Tensor(self.heads, 2 * self.hid_channels))             
+                    attention_width = (
+                        self.hid_channels
+                        if self.attention_type == "gatv2"
+                        else 2 * self.hid_channels
+                    )
+                    edge_att = nn.Parameter(torch.Tensor(self.heads, attention_width))
                     nn.init.xavier_uniform_(edge_att)
                     edge_att_layer.append(edge_att)
                 
@@ -351,7 +362,12 @@ class GNN_Model(MessagePassing):
             edge_att_layer = nn.ParameterList()
             # Hop attention & bias per hop and per agent
             for k in range(self.K + 1):
-                edge_att = nn.Parameter(torch.Tensor(self.heads, 2 * self.hid_channels))             
+                attention_width = (
+                    self.hid_channels
+                    if self.attention_type == "gatv2"
+                    else 2 * self.hid_channels
+                )
+                edge_att = nn.Parameter(torch.Tensor(self.heads, attention_width))
                 nn.init.xavier_uniform_(edge_att)
                 edge_att_layer.append(edge_att)         
                 
@@ -466,9 +482,18 @@ class GNN_Model(MessagePassing):
         batch_size = z_scale_i.size(0)
         
         # edge attention (alpha_check_ij)
-        # a_ij = z_scale_i + z_scale_j
-        a_ij = torch.cat((z_scale_i, z_scale_j), dim=-1)
-        a_ij = self.elu(a_ij)
+        if self.attention_type == "gatv2":
+            # Parameter-matched GATv2-style dynamic attention. The per-agent
+            # encoders provide the node projections, so no shared projection
+            # matrix is introduced here.
+            edge_features = F.leaky_relu(
+                z_scale_i + z_scale_j,
+                negative_slope=0.2,
+            )
+        else:
+            # Preserve the original DG-MAPPO graph-attention baseline exactly.
+            edge_features = torch.cat((z_scale_i, z_scale_j), dim=-1)
+            edge_features = self.elu(edge_features)
 
         src_nodes = edge_index_batch[0]
         agent_indices = src_nodes % self.num_nodes
@@ -478,7 +503,7 @@ class GNN_Model(MessagePassing):
             attention_bank = torch.stack(
                 [
                     self.atts[self.k - 1][i].to(
-                        a_ij.device, non_blocking=True
+                        edge_features.device, non_blocking=True
                     )
                     for i in range(self.num_nodes)
                 ],
@@ -491,15 +516,46 @@ class GNN_Model(MessagePassing):
             N = agent_indices.size(0)
             att_vec = x.unsqueeze(0).expand(N, *x.shape)
 
-        a_ij = (att_vec * a_ij).sum(dim=-1)
-        a_ij = self.softplus(a_ij).clamp(max=1e6) + 1e-6
+        attention_logits = (att_vec * edge_features).sum(dim=-1)
 
-        # symmetric normalization (alpha_ij)
-        row, col = edge_index_batch[0], edge_index_batch[1]
-        deg = scatter_add(a_ij, col, dim=0, dim_size=batch_size * self.num_nodes)
-        deg_inv_sqrt = deg.pow(-0.5)  
-        deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0  # Handle zero degrees
-        a_ij = deg_inv_sqrt[row] * a_ij * deg_inv_sqrt[col]        
+        if self.attention_type == "gatv2":
+            # Normalize across incoming neighbors independently for every
+            # receiver and attention head.
+            row = edge_index_batch[0]
+            receiver_index = row.unsqueeze(-1).expand_as(attention_logits)
+            num_receivers = int(row.max().item()) + 1 if row.numel() else 0
+            max_per_receiver = attention_logits.new_full(
+                (num_receivers, self.heads), float("-inf")
+            )
+            max_per_receiver.scatter_reduce_(
+                0,
+                receiver_index,
+                attention_logits,
+                reduce="amax",
+                include_self=True,
+            )
+            unnormalized = torch.exp(
+                attention_logits - max_per_receiver[row]
+            )
+            normalizer = attention_logits.new_zeros(
+                (num_receivers, self.heads)
+            )
+            normalizer.scatter_add_(0, receiver_index, unnormalized)
+            a_ij = unnormalized / normalizer[row].clamp_min(1e-12)
+            a_ij = F.dropout(
+                a_ij,
+                p=self.args.dropout,
+                training=self.training,
+            )
+        else:
+            a_ij = self.softplus(attention_logits).clamp(max=1e6) + 1e-6
+
+            # Preserve the original symmetric normalization for GAT runs.
+            row, col = edge_index_batch[0], edge_index_batch[1]
+            deg = scatter_add(a_ij, col, dim=0, dim_size=batch_size * self.num_nodes)
+            deg_inv_sqrt = deg.pow(-0.5)
+            deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0
+            a_ij = deg_inv_sqrt[row] * a_ij * deg_inv_sqrt[col]
 
         if torch.isnan(a_ij).any():
             raise ValueError("NaNs detected in edge attention normalization while handling layer k+1 = {self.k}")
