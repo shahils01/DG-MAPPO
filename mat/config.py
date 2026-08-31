@@ -221,7 +221,7 @@ def get_config():
     )
     parser.add_argument("--use_centralized_V", action='store_false',
                         default=True, help="Whether to use centralized V function")
-    parser.add_argument("--use_centralized_critic", action='store_false',
+    parser.add_argument("--use_centralized_critic", action='store_true',
                         default=False, help="Whether to use centralized V function")
     parser.add_argument("--stacked_frames", type=int, default=1,
                         help="Dimension of hidden layers for actor/critic networks")
@@ -420,7 +420,7 @@ def get_config():
     parser.add_argument("--iterations", type=int, default=6) # L_P
     parser.add_argument("--num-layers", type = int, default = 2) # L_M
 
-    parser.add_argument("--dropout", type=float, default=0.1,)
+    parser.add_argument("--dropout", type=float, default=0.0,)
     parser.add_argument("--add-dropout", type = int, default = 0) # Last Layer Dropout
 
     parser.add_argument("--num-heads", type=int, default=1, ) # Attention Heads

@@ -249,6 +249,9 @@ def configure_algorithm(all_args):
         all_args.share_actor = True
         all_args.truelyDistributed = False
 
+    if all_args.algorithm_name == "mappo":
+        all_args.use_centralized_critic = True
+
     if all_args.algorithm_name in {"ippo", "consensus_ippo"}:
         all_args.iterations = 0
         all_args.truelyDistributed = False
@@ -258,7 +261,7 @@ def configure_algorithm(all_args):
 
     recurrent_policy = all_args.use_actor_gru or all_args.use_critic_gru
     if recurrent_policy:
-        supported = {"mappo_dgnn_dsgd", "ippo", "consensus_ippo"}
+        supported = {"mappo_dgnn_dsgd", "mappo", "ippo", "consensus_ippo"}
         if all_args.algorithm_name not in supported:
             raise ValueError(
                 "Actor/critic GRUs are supported only by mappo_dgnn_dsgd, "
