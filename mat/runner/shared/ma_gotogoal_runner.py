@@ -269,6 +269,8 @@ class MAGoToGoalRunner(Runner):
         done_episodes_rewards = []
 
         for episode in range(episodes):
+            reward_consensus_errors = []
+            local_reward_disagreements = []
             if self.use_linear_lr_decay:
                 self.trainer.policy.lr_decay(episode, episodes)
 
@@ -290,6 +292,16 @@ class MAGoToGoalRunner(Runner):
 
                 # Obser reward and next obs
                 obs, share_obs, rewards, dones, infos, _ = self.envs.step(actions_fault)
+                if self.env_name == "long_range_predator_prey":
+                    for env_info in infos:
+                        for agent_info in env_info:
+                            if "reward_consensus_abs_error" in agent_info:
+                                reward_consensus_errors.append(
+                                    agent_info["reward_consensus_abs_error"]
+                                )
+                                local_reward_disagreements.append(
+                                    abs(agent_info["local_reward"] - agent_info["team_reward"])
+                                )
                                  
                 dones_env = np.all(dones, axis=1)
                 reward_env = np.mean(rewards, axis=1).flatten()
@@ -343,6 +355,16 @@ class MAGoToGoalRunner(Runner):
             else:
                 self.compute()
             train_infos = self.train(episode)
+            if reward_consensus_errors:
+                train_infos["reward_consensus/mean_abs_error"] = float(
+                    np.mean(reward_consensus_errors)
+                )
+                train_infos["reward_consensus/max_abs_error"] = float(
+                    np.max(reward_consensus_errors)
+                )
+                train_infos["reward_consensus/pre_consensus_mean_abs_error"] = float(
+                    np.mean(local_reward_disagreements)
+                )
 
             # post process
             total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads

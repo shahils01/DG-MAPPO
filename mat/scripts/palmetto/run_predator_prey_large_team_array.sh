@@ -48,6 +48,13 @@ set -euo pipefail
 cd "${REPO_ROOT}/mat/scripts"
 mkdir -p "${run_dir}"
 
+reward_mode="${REWARD_MODE:-global}"
+reward_consensus_steps="${REWARD_CONSENSUS_STEPS:-3}"
+reward_consensus_args=()
+case "${USE_REWARD_CONSENSUS:-False}" in
+  True|true|1) reward_consensus_args=(--use_reward_consensus) ;;
+esac
+
 gru_args=()
 if [[ "${algorithm}" != "mat_dec" ]]; then
   gru_args=(--use_actor_gru --use_critic_gru --recurrent_N 1 --data_chunk_length 20)
@@ -85,6 +92,9 @@ python train/train_long_range_predator_prey.py \
   --capture_k 1 \
   --prey_speed_ratio "${prey_speed_ratio}" \
   --collision_radius 0.18 \
+  --reward_mode "${reward_mode}" \
+  "${reward_consensus_args[@]}" \
+  --reward_consensus_steps "${reward_consensus_steps}" \
   --env_device cpu \
   --faulty_node -1 \
   --eval_faulty_node -1 \

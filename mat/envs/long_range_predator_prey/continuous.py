@@ -55,6 +55,9 @@ class LongRangePredatorPreyConfig:
     wall_margin: float = 0.45
     wall_penalty: float = 0.02
     prey_noise_scale: float = 0.12
+    reward_mode: str = "global"
+    use_reward_consensus: bool = False
+    reward_consensus_steps: int = 3
     device: str = "cpu"
     seed: Optional[int] = None
 
@@ -64,6 +67,10 @@ class LongRangePredatorPreyTorchCore:
 
     def __init__(self, cfg: LongRangePredatorPreyConfig):
         self.cfg = cfg
+        if cfg.reward_mode not in {"global", "local"}:
+            raise ValueError("reward_mode must be either 'global' or 'local'.")
+        if int(cfg.reward_consensus_steps) < 0:
+            raise ValueError("reward_consensus_steps must be nonnegative.")
         if str(cfg.device).startswith("cuda") and not torch.cuda.is_available():
             self.device = torch.device("cpu")
         else:
@@ -133,7 +140,7 @@ class LongRangePredatorPreyTorchCore:
 
         old_min_dist = self.prev_min_dist.clone()
         self._step_predators(actions)
-        self.last_collision_count = self._collision_count()
+        self.last_collision_count, collision_contrib = self._collision_contributions()
         self._resolve_predator_collisions()
         self._step_prey()
         self._resolve_prey_collisions()
@@ -149,7 +156,8 @@ class LongRangePredatorPreyTorchCore:
         )
         self.prev_min_dist = min_dist.detach()
 
-        progress = ((old_min_dist - min_dist) * self.prey_alive.float()).sum(dim=1)
+        progress_by_prey = (old_min_dist - min_dist) * self.prey_alive.float()
+        progress = progress_by_prey.sum(dim=1)
         capture_reward = new_captures.float().sum(dim=1) * self.cfg.capture_reward
         all_captured = ~self.prey_alive.any(dim=1)
         all_bonus = all_captured.float() * self.cfg.all_captured_bonus
@@ -157,9 +165,11 @@ class LongRangePredatorPreyTorchCore:
         max_close = close_counts.float().max(dim=1).values / max(float(self.cfg.capture_k), 1.0)
         surround = torch.clamp(max_close, 0.0, 1.0) * self.cfg.surround_scale
 
+        wall_contacts = self._wall_contacts()
+        control_effort = actions.square().mean(dim=2)
         collision_penalty = self.last_collision_count.float() * self.cfg.collision_penalty
-        wall_penalty = self._wall_contact_count().float() * self.cfg.wall_penalty
-        control_penalty = actions.square().mean(dim=(1, 2)) * self.cfg.control_penalty
+        wall_penalty = wall_contacts.sum(dim=1) * self.cfg.wall_penalty
+        control_penalty = control_effort.mean(dim=1) * self.cfg.control_penalty
         team_reward = (
             self.cfg.progress_scale * progress
             + capture_reward
@@ -173,10 +183,39 @@ class LongRangePredatorPreyTorchCore:
 
         timeout = self.steps >= self.max_steps
         done_env = all_captured | timeout
-        rewards = team_reward[:, None, None].repeat(1, self.n_predators, 1)
+        local_rewards = self._local_reward_signals(
+            dist=dist,
+            progress_by_prey=progress_by_prey,
+            new_captures=new_captures,
+            all_captured=all_captured,
+            close_counts=close_counts,
+            collision_contrib=collision_contrib,
+            wall_contacts=wall_contacts,
+            control_effort=control_effort,
+        )
+        if self.cfg.reward_mode == "local":
+            reward_values = local_rewards
+        else:
+            reward_values = team_reward[:, None].repeat(1, self.n_predators)
+
+        if self.cfg.use_reward_consensus:
+            reward_values = self._consensus_rewards(
+                reward_values,
+                int(self.cfg.reward_consensus_steps),
+            )
+
+        rewards = reward_values.unsqueeze(-1)
         dones = done_env[:, None].repeat(1, self.n_predators)
 
-        infos = self._infos(new_captures, close_counts, all_captured, timeout)
+        infos = self._infos(
+            new_captures,
+            close_counts,
+            all_captured,
+            timeout,
+            team_reward,
+            local_rewards,
+            reward_values,
+        )
         obs, share_obs, available_actions = self.get_obs()
         return obs, share_obs, rewards, dones, infos, available_actions
 
@@ -193,6 +232,31 @@ class LongRangePredatorPreyTorchCore:
         if self.cfg.ensure_connected_comm_graph:
             adj = self._ensure_connected_adjacency(adj, dist)
         return adj
+
+    def _consensus_rewards(self, rewards: torch.Tensor, steps: int) -> torch.Tensor:
+        """Run average consensus with batched Metropolis mixing weights."""
+        if steps <= 0 or self.n_predators <= 1:
+            return rewards
+
+        adj = self.get_visibility_matrix()
+        eye = torch.eye(self.n_predators, dtype=torch.bool, device=self.device).unsqueeze(0)
+        neighbors = (adj > 0) & ~eye
+        degree = neighbors.sum(dim=-1).to(rewards.dtype)
+        max_degree = torch.maximum(degree.unsqueeze(2), degree.unsqueeze(1))
+        off_diag = torch.where(
+            neighbors,
+            1.0 / (1.0 + max_degree),
+            torch.zeros_like(max_degree),
+        )
+        weights = off_diag.clone()
+        diagonal = 1.0 - off_diag.sum(dim=-1)
+        diag_idx = torch.arange(self.n_predators, device=self.device)
+        weights[:, diag_idx, diag_idx] = diagonal
+
+        estimates = rewards
+        for _ in range(steps):
+            estimates = torch.bmm(weights, estimates.unsqueeze(-1)).squeeze(-1)
+        return estimates
 
     def _ensure_connected_adjacency(self, adj: torch.Tensor, dist: torch.Tensor) -> torch.Tensor:
         if self.n_predators <= 1:
@@ -562,18 +626,97 @@ class LongRangePredatorPreyTorchCore:
     def obs_radius(self) -> float:
         return float(self.cfg.obs_radius)
 
-    def _collision_count(self) -> torch.Tensor:
+    def _collision_contributions(self):
         dist = torch.cdist(self.predator_pose[:, :, :2], self.predator_pose[:, :, :2])
         eye = torch.eye(self.n_predators, dtype=torch.bool, device=self.device).unsqueeze(0)
         collisions = (dist < self.cfg.collision_radius) & ~eye
-        return torch.div(collisions.sum(dim=(1, 2)), 2, rounding_mode="trunc")
+        contributions = 0.5 * collisions.sum(dim=2).float()
+        totals = contributions.sum(dim=1).to(torch.long)
+        return totals, contributions
+
+    def _collision_count(self) -> torch.Tensor:
+        totals, _ = self._collision_contributions()
+        return totals
+
+    def _wall_contacts(self) -> torch.Tensor:
+        xy = self.predator_pose[:, :, :2]
+        return (xy.abs() >= (self.half_world - 0.08)).any(dim=-1).float()
 
     def _wall_contact_count(self) -> torch.Tensor:
-        xy = self.predator_pose[:, :, :2]
-        near_wall = (xy.abs() >= (self.half_world - 0.08)).any(dim=-1)
-        return near_wall.sum(dim=1)
+        return self._wall_contacts().sum(dim=1).to(torch.long)
 
-    def _infos(self, new_captures, close_counts, all_captured, timeout):
+    def _local_reward_signals(
+        self,
+        *,
+        dist: torch.Tensor,
+        progress_by_prey: torch.Tensor,
+        new_captures: torch.Tensor,
+        all_captured: torch.Tensor,
+        close_counts: torch.Tensor,
+        collision_contrib: torch.Tensor,
+        wall_contacts: torch.Tensor,
+        control_effort: torch.Tensor,
+    ) -> torch.Tensor:
+        """Allocate team-reward terms so their agent average is the team reward.
+
+        Prey-specific terms are assigned to the closest predator (agent-index
+        tie breaking is deterministic). Pairwise collision costs are split
+        equally between the two participants. The returned signals are scaled
+        for average consensus, hence their mean exactly equals the shared team
+        reward before any consensus iterations.
+        """
+        dtype = dist.dtype
+        local_additive = torch.zeros(
+            self.n_envs,
+            self.n_predators,
+            dtype=dtype,
+            device=self.device,
+        )
+        nearest_predator = dist.argmin(dim=1)
+
+        local_additive.scatter_add_(
+            1,
+            nearest_predator,
+            self.cfg.progress_scale * progress_by_prey,
+        )
+        local_additive.scatter_add_(
+            1,
+            nearest_predator,
+            self.cfg.capture_reward * new_captures.to(dtype),
+        )
+
+        first_capture = new_captures.to(torch.int64).argmax(dim=1)
+        bonus_owner = nearest_predator.gather(1, first_capture.unsqueeze(1)).squeeze(1)
+        bonus = all_captured.to(dtype) * self.cfg.all_captured_bonus
+        local_additive.scatter_add_(1, bonus_owner.unsqueeze(1), bonus.unsqueeze(1))
+
+        surround_prey = close_counts.argmax(dim=1)
+        surround_owner = nearest_predator.gather(1, surround_prey.unsqueeze(1)).squeeze(1)
+        max_close = close_counts.float().max(dim=1).values / max(float(self.cfg.capture_k), 1.0)
+        surround = torch.clamp(max_close, 0.0, 1.0) * self.cfg.surround_scale
+        local_additive.scatter_add_(1, surround_owner.unsqueeze(1), surround.unsqueeze(1))
+
+        local_additive -= self.cfg.collision_penalty * collision_contrib
+        local_additive -= self.cfg.wall_penalty * wall_contacts
+
+        # The team control cost is the mean of the per-agent efforts, while the
+        # time cost is already shared. These terms therefore remain unscaled.
+        return (
+            float(self.n_predators) * local_additive
+            - self.cfg.control_penalty * control_effort
+            - self.cfg.time_penalty
+        )
+
+    def _infos(
+        self,
+        new_captures,
+        close_counts,
+        all_captured,
+        timeout,
+        team_reward,
+        local_rewards,
+        reward_values,
+    ):
         infos = []
         visible = self._prey_visible_by_predator()
         comm = self.get_visibility_matrix()
@@ -591,6 +734,12 @@ class LongRangePredatorPreyTorchCore:
                             1.0 - self.prey_alive[env_i].float().mean().item()
                         ),
                         "collision_count": int(self.last_collision_count[env_i].item()),
+                        "team_reward": float(team_reward[env_i].item()),
+                        "local_reward": float(local_rewards[env_i, agent_i].item()),
+                        "aggregated_reward": float(reward_values[env_i, agent_i].item()),
+                        "reward_consensus_abs_error": float(
+                            (reward_values[env_i, agent_i] - team_reward[env_i]).abs().item()
+                        ),
                         "all_live_prey_visible": bool(live_prey_visible_by_any.all().item()),
                         "live_prey_visible_count": int(
                             (prey_visible_by_any & self.prey_alive[env_i]).sum().item()

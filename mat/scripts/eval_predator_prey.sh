@@ -8,6 +8,7 @@ scenario="LongRangePredatorPreyContinuous-v0"
 
 # Example:
 #   MODEL_DIR=results/long_range_predator_prey/.../models/transformer_10.pt sh eval_predator_prey.sh
+#   REWARD_MODE=local USE_REWARD_CONSENSUS=True REWARD_CONSENSUS_STEPS=3 sh eval_predator_prey.sh
 # If MODEL_DIR is unset, evaluation uses random initialized weights and prints a warning.
 algo="${ALGO:-mappo_dgnn_dsgd}"
 exp="${EXP:-eval}"
@@ -30,6 +31,9 @@ capture_radius="${CAPTURE_RADIUS:-0.35}"
 capture_k="${CAPTURE_K:-1}"
 prey_speed_ratio="${PREY_SPEED_RATIO:-0.85}"
 collision_radius="${COLLISION_RADIUS:-0.18}"
+reward_mode="${REWARD_MODE:-global}"
+use_reward_consensus="${USE_REWARD_CONSENSUS:-False}"
+reward_consensus_steps="${REWARD_CONSENSUS_STEPS:-3}"
 env_device="${ENV_DEVICE:-cpu}"
 
 hidden_dim="${HIDDEN_DIM:-128}"
@@ -63,6 +67,12 @@ visibility_args=""
 if [ "${ensure_prey_visible}" = "False" ] || [ "${ensure_prey_visible}" = "false" ] || [ "${ensure_prey_visible}" = "0" ]; then
   visibility_args="--disable_prey_visibility_guarantee"
   echo "prey visibility guarantee disabled"
+fi
+
+reward_consensus_args=""
+if [ "${use_reward_consensus}" = "True" ] || [ "${use_reward_consensus}" = "true" ] || [ "${use_reward_consensus}" = "1" ]; then
+  reward_consensus_args="--use_reward_consensus"
+  echo "reward consensus enabled for ${reward_consensus_steps} rounds"
 fi
 
 model_args=""
@@ -100,6 +110,9 @@ python eval/eval_long_range_predator_prey.py \
  --capture_k "${capture_k}" \
  --prey_speed_ratio "${prey_speed_ratio}" \
  --collision_radius "${collision_radius}" \
+ --reward_mode "${reward_mode}" \
+ ${reward_consensus_args} \
+ --reward_consensus_steps "${reward_consensus_steps}" \
  --env_device "${env_device}" \
  --iterations 3 \
  --gnn_loss_coef 10 \

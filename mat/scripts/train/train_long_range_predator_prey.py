@@ -70,6 +70,9 @@ def make_env_kwargs(all_args, seed):
         "prey_avoid_radius": all_args.prey_avoid_radius,
         "collision_radius": all_args.collision_radius,
         "collision_resolution_iters": all_args.collision_resolution_iters,
+        "reward_mode": all_args.reward_mode,
+        "use_reward_consensus": all_args.use_reward_consensus,
+        "reward_consensus_steps": all_args.reward_consensus_steps,
         "device": all_args.env_device,
         "seed": seed,
     }
@@ -222,6 +225,24 @@ def parse_args(args, parser):
     parser.add_argument("--prey_avoid_radius", type=float, default=2.4)
     parser.add_argument("--collision_radius", type=float, default=0.18)
     parser.add_argument("--collision_resolution_iters", type=int, default=4)
+    parser.add_argument(
+        "--reward_mode",
+        choices=["global", "local"],
+        default="global",
+        help="global broadcasts the original team reward; local returns per-agent contributions.",
+    )
+    parser.add_argument(
+        "--use_reward_consensus",
+        action="store_true",
+        default=False,
+        help="Apply neighbor-based average consensus to rewards before returning them.",
+    )
+    parser.add_argument(
+        "--reward_consensus_steps",
+        type=int,
+        default=3,
+        help="Number of Metropolis average-consensus rounds per environment step.",
+    )
     parser.add_argument("--env_device", type=str, default="cpu")
     parser.add_argument("--faulty_node", type=int, default=-1)
     parser.add_argument("--eval_faulty_node", type=int, nargs="+", default=[-1])
@@ -240,6 +261,8 @@ def parse_args(args, parser):
         all_args.env_episode_length = all_args.episode_length
     if all_args.eval_faulty_node is None:
         all_args.eval_faulty_node = [-1]
+    if all_args.reward_consensus_steps < 0:
+        parser.error("--reward_consensus_steps must be nonnegative")
     return all_args
 
 
