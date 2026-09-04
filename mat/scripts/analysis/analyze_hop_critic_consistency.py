@@ -75,6 +75,9 @@ def parse_analysis_args(argv):
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--analysis_output_dir", default=None)
     parser.add_argument("--analysis_episodes", type=int, default=200)
+    parser.add_argument("--initial_state_samples", type=int, default=20)
+    parser.add_argument("--rollouts_per_initial_state", type=int, default=20)
+    parser.add_argument("--full_checkpoint", default=None)
     parser.add_argument("--analysis_seed", type=int, default=2026)
     parser.add_argument("--analysis_device", choices=["auto", "cpu", "cuda"], default="auto")
     parser.add_argument("--hop_counts", type=int, nargs="+", default=None)
@@ -97,9 +100,16 @@ def parse_analysis_args(argv):
         for option in action.option_strings:
             if any(token == option or token.startswith(f"{option}=") for token in argv):
                 explicit_destinations.add(action.dest)
-    known_destinations = {action.dest for action in parser._actions}
+    actions_by_destination = {action.dest: action for action in parser._actions}
+    known_destinations = set(actions_by_destination)
     for key, value in config_defaults.items():
         if key in known_destinations and key not in explicit_destinations:
+            action = actions_by_destination[key]
+            if value is not None and action.type is not None:
+                if isinstance(value, list):
+                    value = [action.type(item) for item in value]
+                elif not isinstance(value, bool) or action.type is not bool:
+                    value = action.type(value)
             setattr(args, key, value)
     if (
         "env_episode_length" not in explicit_destinations

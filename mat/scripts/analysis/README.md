@@ -37,3 +37,27 @@ monotonically with message-passing depth.
 By default, actions are sampled from the learned policy, matching the policy
 whose value function was trained. Add `--deterministic` for a separate
 mean-action sensitivity analysis.
+
+## Repeated-rollout initial-state analysis
+
+`analyze_initial_state_value_consistency.py` provides the cleaner estimate of
+the value-function target. By default it samples 20 initial states and runs 20
+independent stochastic-policy trajectories from each identical initial state.
+Every rollout stops on environment termination or after 200 steps. Run it with:
+
+```bash
+python mat/scripts/analysis/analyze_initial_state_value_consistency.py \
+  --run_config /path/to/wandb/run/files/config.yaml \
+  --checkpoint /path/to/wandb/run/files/transformer_3124.pt \
+  --full_checkpoint /path/to/checkpoints/seed2/checkpoint_3124.pt \
+  --analysis_device cuda \
+  --analysis_output_dir /path/to/initial_state_value_analysis
+```
+
+The matching seed-2 full checkpoint is accepted so future or repaired
+checkpoints can supply ValueNorm. The current checkpoint's
+`value_normalizer_state_dict` is empty, however, so the script falls back to a
+held-out affine reward-scale map. It fits that map only from the trained
+`K=5` critic on calibration initial states and applies the same map to every
+hop. Remaining initial states are used for metrics and paired state-cluster
+bootstrap intervals.

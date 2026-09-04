@@ -11,6 +11,10 @@ from mat.scripts.analysis.analyze_hop_critic_consistency import (
     split_episode_ids,
     temporary_hops,
 )
+from mat.scripts.analysis.analyze_initial_state_value_consistency import (
+    apply_reward_scale,
+    score_hops,
+)
 
 
 def test_discounted_returns():
@@ -76,11 +80,61 @@ def test_wandb_config_reconstructs_env_and_cli_can_override(tmp_path):
         "algorithm_name:\n  value: mappo_dgnn_dsgd\n"
         "iterations:\n  value: 5\n"
         "num_predators:\n  value: 10\n"
-        "num_prey:\n  value: 5\n",
+        "num_prey:\n  value: 5\n"
+        "opti_eps:\n  value: '1e-05'\n",
         encoding="utf-8",
     )
     base = ["--run_config", str(config), "--checkpoint", "unused.pt"]
     args = parse_analysis_args(base)
     assert (args.num_predators, args.num_prey, args.iterations) == (10, 5, 5)
+    assert args.opti_eps == 1e-5
+    assert isinstance(args.opti_eps, float)
     overridden = parse_analysis_args(base + ["--num_predators", "3"])
     assert overridden.num_predators == 3
+
+
+def test_initial_state_scale_is_fit_at_trained_hop_and_shared_across_hops():
+    rows = []
+    for state in range(6):
+        target = float(3 * state + 2)
+        for hop in (0, 1):
+            rows.append(
+                {
+                    "initial_state": state,
+                    "hop": hop,
+                    "agent": 0,
+                    "raw_value": target / 2.0 + hop,
+                    "mc_return_mean": target,
+                }
+            )
+    calibration_ids, test_ids, calibration, method = apply_reward_scale(
+        rows, trained_hops=1, normalizer=None, calibration_fraction=0.5, seed=4
+    )
+    assert set(calibration_ids).isdisjoint(test_ids)
+    assert method == "held_out_affine_from_trained_hop"
+    assert calibration[0]["fit_hop"] == 1
+    assert np.isclose(calibration[0]["slope"], 2.0)
+    for row in rows:
+        expected = 2.0 * row["raw_value"] - 2.0
+        assert np.isclose(row["scaled_value"], expected)
+
+
+def test_initial_state_metrics_include_paired_deltas():
+    rows = []
+    for state in range(5):
+        target = float(state + 1)
+        for hop, error in ((0, 1.0), (1, 0.25)):
+            rows.append(
+                {
+                    "initial_state": state,
+                    "hop": hop,
+                    "agent": 0,
+                    "raw_value": target + error,
+                    "scaled_value": target + error,
+                    "mc_return_mean": target,
+                }
+            )
+    metrics = score_hops(rows, list(range(5)), [0, 1], bootstrap_samples=20, seed=9)
+    assert metrics[1]["mae"] < metrics[0]["mae"]
+    assert metrics[1]["mae_delta_vs_k0"] < 0.0
+    assert metrics[1]["mae_delta_ci_high"] < 0.0
